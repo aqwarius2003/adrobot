@@ -17,6 +17,13 @@ class LookupOptionsResponse(BaseModel):
     traffic_sources: list[LookupItem] = Field(default_factory=list)
 
 
+class CountryCatalogItem(BaseModel):
+    code: str
+    name_ru: str
+    name_en: str
+    aliases: list[str] = Field(default_factory=list)
+
+
 class OfferSearchItem(BaseModel):
     id: int
     name: str

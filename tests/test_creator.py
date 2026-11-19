@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from src.api.dependencies import get_db, get_keitaro_client
+from src.core.config import settings
 from src.core.database import Base
 from src.main import create_app
 from src.services.keitaro_client import KeitaroGateway
@@ -135,7 +136,7 @@ def test_creator_success_creates_two_flows(client: TestClient, mock_kt: MockKeit
 
     assert data["remote_campaign_id"] == 9001
     # Check surname prefix
-    assert data["name"].startswith("test_novikov_")
+    assert data["name"].startswith(f"test_{settings.CAMPAIGN_SURNAME.lower()}_")
     assert "summer_promo" in data["name"]
     assert data["verification_status"] == "verified"
     assert data["flow1_stream_id"] is not None

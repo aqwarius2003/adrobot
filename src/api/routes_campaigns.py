@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from src.api.dependencies import get_creator_service, get_editor_service, get_keitaro_client
+from src.domain.iso_countries import COUNTRY_CATALOG
 from src.domain.schemas import (
     CampaignCreateRequest,
     CampaignCreateResponse,
     CampaignDetailDTO,
     CampaignSummaryDTO,
+    CountryCatalogItem,
     LookupItem,
     LookupOptionsResponse,
     OfferSearchItem,
@@ -19,6 +21,13 @@ from src.services.editor_service import (
 from src.services.keitaro_client import KeitaroApiError, KeitaroGateway
 
 router = APIRouter(prefix="/api", tags=["Campaigns"])
+
+
+@router.get("/geo/countries", response_model=list[CountryCatalogItem])
+async def get_geo_countries(response: Response) -> list[dict]:
+    """Return complete authoritative ISO 3166-1 alpha-2 country catalog."""
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return COUNTRY_CATALOG
 
 
 @router.get("/options", response_model=LookupOptionsResponse)

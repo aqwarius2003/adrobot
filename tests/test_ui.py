@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from src.core.config import settings
 from src.main import create_app
 
 
@@ -9,7 +10,7 @@ def test_ui_creator_page():
     response = client.get("/creator")
     assert response.status_code == 200
     assert "Создание кампании" in response.text
-    assert "test_novikov_" in response.text
+    assert f"test_{settings.CAMPAIGN_SURNAME.lower()}_" in response.text
     assert "routing-preview-box" in response.text
 
 

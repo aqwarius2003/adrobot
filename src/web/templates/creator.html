@@ -32,20 +32,31 @@
         <div class="form-error" id="nameError"></div>
       </div>
 
-      <!-- GEO -->
+      <!-- GEO Country Picker -->
       <div class="form-group">
-        <label for="campaignGeo" class="form-label">
-          GEO страны (ISO 3166-1 alpha-2) <span class="required">*</span>
+        <label for="geoSearchInput" class="form-label" id="geoLabel">
+          GEO <span class="required">*</span>
         </label>
-        <input 
-          type="text" 
-          id="campaignGeo" 
-          class="form-control" 
-          placeholder="AU или список через запятую: MX,AU,RO" 
-          required 
-          autocomplete="off"
-        >
-        <div class="form-help">Укажите один код или несколько через запятую.</div>
+        <div class="geo-picker-container" id="geoPickerContainer">
+          <div class="geo-picker-box" id="geoPickerBox" tabindex="-1">
+            <div class="geo-tags-container" id="geoTagsContainer"></div>
+            <input 
+              type="text" 
+              id="geoSearchInput" 
+              class="geo-search-input" 
+              placeholder="Название страны или код" 
+              autocomplete="off"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="geoDropdown"
+              aria-labelledby="geoLabel"
+            >
+          </div>
+          <input type="hidden" id="campaignGeo" name="geo" required>
+          <div id="geoDropdown" class="geo-dropdown hidden" role="listbox" aria-labelledby="geoLabel"></div>
+        </div>
+        <div class="form-help">Можно выбрать несколько стран</div>
         <div class="form-error" id="geoError"></div>
       </div>
 
@@ -122,15 +133,16 @@
       <div class="flow-item">
         <div class="flow-header">
           <span class="flow-tag tag-flow1">Flow 1</span>
-          <span class="flow-mode">Country Filter (Accept)</span>
+          <span class="flow-mode">Фильтр по странам</span>
         </div>
         <div class="flow-body">
           <div class="flow-condition">
-            Страны: <strong id="previewGeoText">не указаны</strong>
+            Страны: <span id="previewGeoContainer"><strong id="previewGeoText">Страны не выбраны</strong></span>
           </div>
           <div class="flow-arrow">&darr; Редирект</div>
           <div class="flow-destination">
             <code>https://google.com/</code>
+            <span class="preview-info-tag" data-tooltip="Посетители из выбранных стран перенаправляются на Google" tabindex="0" aria-label="Справка по Flow 1" role="button">ⓘ Справка</span>
           </div>
         </div>
       </div>
@@ -140,7 +152,7 @@
       <div class="flow-item">
         <div class="flow-header">
           <span class="flow-tag tag-flow2">Flow 2</span>
-          <span class="flow-mode">Default Fallback</span>
+          <span class="flow-mode">Основной поток</span>
         </div>
         <div class="flow-body">
           <div class="flow-condition">Все остальные посетители</div>
