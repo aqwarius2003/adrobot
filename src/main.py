@@ -20,16 +20,54 @@ async def lifespan(app: FastAPI):
     # Initialize logger
     setup_logging()
     logger.info(
-        "Starting Keitaro Campaign Manager (version=%s, env=%s)",
+        "Starting Keitaro Campaign Manager (version=%s, env=%s, mode=%s)",
         settings.APP_VERSION,
         settings.APP_ENV,
+        settings.KT_MODE,
     )
+
+    # In local demo mode, auto-start simulator on port 8001 if not already running
+    sim_server = None
+    if settings.is_demo_mode and (
+        "127.0.0.1:8001" in settings.DEMO_SIMULATOR_URL
+        or "localhost:8001" in settings.DEMO_SIMULATOR_URL
+    ):
+        import socket
+        import threading
+
+        import uvicorn
+
+        from src.simulator.app import simulator_app
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        is_port_open = False
+        try:
+            s.connect(("127.0.0.1", 8001))
+            is_port_open = True
+        except Exception:
+            is_port_open = False
+        finally:
+            s.close()
+
+        if not is_port_open:
+            logger.info(
+                "Demo mode: starting autonomous simulator on 127.0.0.1:8001 in background thread..."
+            )
+            sim_config = uvicorn.Config(
+                simulator_app, host="127.0.0.1", port=8001, log_level="warning"
+            )
+            sim_server = uvicorn.Server(sim_config)
+            sim_thread = threading.Thread(target=sim_server.run, daemon=True)
+            sim_thread.start()
 
     # Auto-create tables for development / initial skeleton
     Base.metadata.create_all(bind=engine)
-    logger.info("Database initialized successfully at %s", settings.DATABASE_URL)
+    logger.info("Database initialized successfully at %s", settings.effective_database_url)
 
     yield
+
+    if sim_server:
+        sim_server.should_exit = True
 
     logger.info("Shutting down Keitaro Campaign Manager")
 
