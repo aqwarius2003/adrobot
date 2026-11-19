@@ -51,6 +51,8 @@ class StreamSyncService:
             "schema": stream_data.get("schema"),
             "action_type": stream_data.get("action_type"),
             "action_payload": stream_data.get("action_payload"),
+            "filters": stream_data.get("filters") or [],
+            "landings": stream_data.get("landings") or [],
             "offers": normalized_offers,
         }
         encoded = json.dumps(content, sort_keys=True).encode("utf-8")
@@ -65,6 +67,16 @@ class StreamSyncService:
         stream = self.db.query(Stream).filter_by(id=stream_id).first()
         if not stream or not stream.is_managed:
             raise ValueError("Managed stream not found")
+
+        # F5: Block push if already in publishing/verifying/unknown
+        if stream.sync_status in ("publishing", "verifying"):
+            raise SyncConflictError(
+                f"Stream is currently being pushed (state='{stream.sync_status}'). Concurrent push locked."
+            )
+
+        if stream.sync_status == "unknown":
+            # Attempt recovery/reconciliation before allowing new push
+            return await self.reconcile_stream(stream.id)
 
         if stream.revision != expected_revision:
             raise SyncConflictError(
@@ -85,6 +97,16 @@ class StreamSyncService:
             detail = self.editor_service.get_campaign_detail(stream.campaign_id)
             return next(s for s in detail.streams if s.id == stream.id)
 
+        candidate_offers = [
+            {
+                "offer_id": so.offer.remote_offer_id,
+                "share": so.draft_share,
+                "state": "active",
+            }
+            for so in active_offers
+        ]
+        candidate_payload = {"offers": candidate_offers}
+
         if not op:
             op = Operation(
                 idempotency_key=key,
@@ -92,6 +114,7 @@ class StreamSyncService:
                 target_id=stream.id,
                 stage="preflight",
                 status="in_progress",
+                candidate_payload=candidate_payload,
             )
             self.db.add(op)
             self.db.commit()
@@ -121,31 +144,51 @@ class StreamSyncService:
                 "Conflict: Remote stream was modified in Keitaro since last fetch. Resolve via Cancel -> Fetch Streams."
             )
 
-        # Step 2: Prepare payload (ONLY active offers, exact integer shares, no pins, no removed)
-        candidate_offers = [
-            {
-                "offer_id": so.offer.remote_offer_id,
-                "share": so.draft_share,
-                "state": "active",
-            }
-            for so in active_offers
-        ]
-        candidate_payload = {"offers": candidate_offers}
-        op.candidate_payload = candidate_payload
+        # Static optimization: Pin-only change check (if remote offers match candidate, skip PUT)
+        remote_offers_dict = {
+            o.get("offer_id"): o.get("share")
+            for o in (remote_stream.get("offers") or [])
+            if o.get("state", "active") == "active"
+        }
+        cand_dict = {o["offer_id"]: o["share"] for o in candidate_offers}
+
+        if remote_offers_dict == cand_dict:
+            # KT already has identical offers; only local pins or flags changed!
+            logger.info("Pin-only or no-op push detected: skipping remote PUT to Keitaro")
+            for so in stream.stream_offers:
+                if so.draft_state == "active":
+                    so.baseline_share = so.draft_share
+                    so.baseline_state = "active"
+                    so.baseline_pinned = so.draft_pinned
+                    so.has_been_published = True
+                else:
+                    so.baseline_share = 0
+                    so.baseline_state = "removed"
+                    so.baseline_pinned = False
+
+            stream.sync_status = "clean"
+            stream.remote_fingerprint = current_remote_fp
+            stream.last_sync_at = datetime.now(UTC)
+            stream.revision += 1
+            op.status = "success"
+            op.stage = "completed"
+            self.db.commit()
+
+            detail = self.editor_service.get_campaign_detail(stream.campaign_id)
+            return next(s for s in detail.streams if s.id == stream.id)
+
+        # Step 2: Send PUT to Keitaro
         op.stage = "updating_kt"
         self.db.commit()
 
-        # Step 3: Send PUT to Keitaro
         try:
             await self.kt_client.update_stream(stream.remote_stream_id, candidate_payload)
         except KeitaroApiError as exc:
             if exc.status_code == 504:
-                # Timeout after request sent: mark unknown and attempt reconciliation
                 stream.sync_status = "unknown"
                 op.status = "unknown"
                 op.error_message = f"Timeout during stream update: {exc}"
                 self.db.commit()
-                # Attempt reconciliation GET
                 return await self._reconcile_timeout(stream, candidate_offers, op)
             stream.sync_status = "dirty"
             op.status = "failed"
@@ -153,7 +196,7 @@ class StreamSyncService:
             self.db.commit()
             raise
 
-        # Step 4: Read-back Verification GET
+        # Step 3: Read-back Verification GET
         op.stage = "verifying"
         self.db.commit()
 
@@ -166,12 +209,10 @@ class StreamSyncService:
             self.db.commit()
             raise KeitaroApiError(f"Read-back verification GET failed: {exc}") from exc
 
-        # Compare read-back offers
         rb_offers = read_back_stream.get("offers") or []
         rb_dict = {
             o.get("offer_id"): o.get("share") for o in rb_offers if o.get("state") == "active"
         }
-        cand_dict = {o["offer_id"]: o["share"] for o in candidate_offers}
 
         if rb_dict != cand_dict:
             stream.sync_status = "conflict"
@@ -182,7 +223,7 @@ class StreamSyncService:
                 f"Read-back verification mismatch between Keitaro and published candidate. Expected {cand_dict}, got {rb_dict}"
             )
 
-        # Step 5: Update Baseline atomically
+        # Step 4: Update Baseline atomically
         for so in stream.stream_offers:
             if so.draft_state == "active":
                 so.baseline_share = so.draft_share
@@ -207,10 +248,27 @@ class StreamSyncService:
         detail = self.editor_service.get_campaign_detail(stream.campaign_id)
         return next(s for s in detail.streams if s.id == stream.id)
 
+    async def reconcile_stream(self, stream_id: int) -> StreamDTO:
+        """Perform reconciliation for a stream with unknown status (e.g. after server restart)."""
+        stream = self.db.query(Stream).filter_by(id=stream_id).first()
+        if not stream:
+            raise ValueError("Stream not found")
+
+        last_op = (
+            self.db.query(Operation)
+            .filter_by(target_id=stream.id, operation_type="push_stream")
+            .order_by(Operation.id.desc())
+            .first()
+        )
+        candidate_offers = (
+            last_op.candidate_payload.get("offers") if last_op and last_op.candidate_payload else []
+        )
+
+        return await self._reconcile_timeout(stream, candidate_offers, last_op)
+
     async def _reconcile_timeout(
-        self, stream: Stream, candidate_offers: list[dict[str, Any]], op: Operation
+        self, stream: Stream, candidate_offers: list[dict[str, Any]], op: Operation | None
     ) -> StreamDTO:
-        """Reconcile state after a 504 timeout on PUT."""
         try:
             read_back = await self.kt_client.get_stream(stream.remote_stream_id)
             rb_offers = read_back.get("offers") or []
@@ -219,8 +277,7 @@ class StreamSyncService:
             }
             cand_dict = {o["offer_id"]: o["share"] for o in candidate_offers}
 
-            if rb_dict == cand_dict:
-                # Upstream accepted the write before timing out!
+            if cand_dict and rb_dict == cand_dict:
                 for so in stream.stream_offers:
                     if so.draft_state == "active":
                         so.baseline_share = so.draft_share
@@ -235,11 +292,17 @@ class StreamSyncService:
                 stream.remote_fingerprint = self._compute_fingerprint(read_back)
                 stream.last_sync_at = datetime.now(UTC)
                 stream.revision += 1
-                op.status = "success"
-                op.stage = "completed"
+                if op:
+                    op.status = "success"
+                    op.stage = "completed"
                 self.db.commit()
                 logger.info("Timeout reconciled successfully: KT state matches candidate")
             else:
+                stream.sync_status = "conflict"
+                if op:
+                    op.status = "failed"
+                    op.error_message = f"Timeout reconciliation conflict: {rb_dict} vs {cand_dict}"
+                self.db.commit()
                 logger.warning(
                     "Timeout reconciliation found discrepancy: %s vs %s", rb_dict, cand_dict
                 )

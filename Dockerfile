@@ -1,14 +1,16 @@
 # Build stage
 FROM python:3.11-slim AS builder
 
-WORKDIR /build
+WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Copy uv binary from official image
+COPY --from=ghcr.io/astral-sh/uv:0.6.10 /uv /uvx /bin/
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Copy dependency definition and lockfile
+COPY pyproject.toml uv.lock .python-version ./
+
+# Install runtime production dependencies into /app/.venv
+RUN uv sync --frozen --no-dev --no-install-project
 
 
 # Runtime stage
@@ -21,21 +23,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
+# Create unprivileged user
 RUN groupadd -g 10001 appgroup && \
     useradd -u 10001 -g appgroup -s /bin/false -m appuser
 
-# Copy installed python packages from builder
-COPY --from=builder /root/.local /home/appuser/.local
+# Copy virtualenv from builder
+COPY --from=builder /app/.venv /app/.venv
 
-# Ensure path includes user packages
-ENV PATH=/home/appuser/.local/bin:$PATH
+ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV APP_ENV=production
 ENV DATABASE_URL=sqlite:////app/data/app.db
 
-# Create persistent data directory with permissions
+# Ensure persistent data dir
 RUN mkdir -p /app/data && chown -R appuser:appgroup /app/data
 
 # Copy project files
@@ -43,7 +44,6 @@ COPY alembic.ini .
 COPY alembic ./alembic
 COPY src ./src
 
-# Change ownership
 RUN chown -R appuser:appgroup /app
 
 USER appuser

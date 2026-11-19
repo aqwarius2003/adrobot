@@ -38,3 +38,5 @@ data/*
 # OS files
 .DS_Store
 Thumbs.db
+
+NEXT_AGENT_PROMPT.md

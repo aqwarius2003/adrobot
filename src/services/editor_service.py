@@ -50,6 +50,8 @@ class StreamEditorService:
             "schema": stream_data.get("schema"),
             "action_type": stream_data.get("action_type"),
             "action_payload": stream_data.get("action_payload"),
+            "filters": stream_data.get("filters") or [],
+            "landings": stream_data.get("landings") or [],
             "offers": normalized_offers,
         }
         encoded = json.dumps(content, sort_keys=True).encode("utf-8")
@@ -84,11 +86,12 @@ class StreamEditorService:
             self.db.add(campaign)
             self.db.flush()
 
-        # Check for dirty drafts across streams in this campaign
-        for stream in campaign.streams:
-            if stream.sync_status == "dirty":
+        # F5: Check for in-flight / dirty / unknown sync states across streams in this campaign
+        existing_streams = self.db.query(Stream).filter_by(campaign_id=campaign.id).all()
+        for stream in existing_streams:
+            if stream.sync_status in ("dirty", "publishing", "verifying", "unknown"):
                 raise EditorConflictError(
-                    f"Cannot fetch: stream '{stream.name}' has unpublished local changes. Push or Cancel first."
+                    f"Cannot fetch: stream '{stream.name}' has unpublished local changes or active sync (state='{stream.sync_status}'). Push or Cancel first."
                 )
 
         # Fetch remote streams from Keitaro
@@ -109,7 +112,12 @@ class StreamEditorService:
             )
 
             r_offers = r_stream.get("offers") or []
-            is_managed = bool(r_offers)
+            schema = r_stream.get("schema", "redirect")
+
+            # F4: Stream is managed if it currently has offers OR was previously managed with compatible schema
+            is_managed = bool(r_offers) or (
+                local_stream is not None and local_stream.is_managed and schema != "redirect"
+            )
 
             if not local_stream:
                 local_stream = Stream(
@@ -119,7 +127,7 @@ class StreamEditorService:
                     position=r_stream.get("position", 1),
                     is_managed=is_managed,
                     stream_type=r_stream.get("type", "regular"),
-                    stream_schema=r_stream.get("schema", "redirect"),
+                    stream_schema=schema,
                     action_type=r_stream.get("action_type"),
                     action_payload=r_stream.get("action_payload"),
                     sync_status="clean",
@@ -130,11 +138,10 @@ class StreamEditorService:
                 self.db.add(local_stream)
                 self.db.flush()
             else:
-                # Update existing stream properties
                 local_stream.name = r_stream.get("name", local_stream.name)
                 local_stream.position = r_stream.get("position", local_stream.position)
                 local_stream.stream_type = r_stream.get("type", local_stream.stream_type)
-                local_stream.stream_schema = r_stream.get("schema", local_stream.stream_schema)
+                local_stream.stream_schema = schema
                 local_stream.action_type = r_stream.get("action_type", local_stream.action_type)
                 local_stream.action_payload = r_stream.get(
                     "action_payload", local_stream.action_payload
@@ -190,7 +197,6 @@ class StreamEditorService:
                     )
                     self.db.add(so)
                 else:
-                    # Update baseline and clean draft
                     so.baseline_share = share
                     so.baseline_state = "active"
                     so.draft_share = share
@@ -198,10 +204,12 @@ class StreamEditorService:
                     so.archive_reason = None
                     so.has_been_published = True
 
-            # External deletions check: local offers that disappeared in Keitaro
-            for so in local_stream.stream_offers:
+            # External deletions check: local offers that disappeared in Keitaro (F4)
+            current_stream_offers = (
+                self.db.query(StreamOffer).filter_by(stream_id=local_stream.id).all()
+            )
+            for so in current_stream_offers:
                 if so.offer.remote_offer_id not in remote_offer_ids_seen:
-                    # Moved to archive (Removed, 0%)
                     so.baseline_state = "removed"
                     so.baseline_share = 0
                     so.draft_state = "removed"
@@ -216,11 +224,12 @@ class StreamEditorService:
                     )
 
         # Check for streams deleted remotely in KT
-        for stream in campaign.streams:
+        for stream in self.db.query(Stream).filter_by(campaign_id=campaign.id).all():
             if stream.remote_stream_id not in remote_stream_ids_seen:
                 stream.sync_status = "remote_missing"
 
         self.db.commit()
+        # F3: Return fresh query of campaign detail
         return self.get_campaign_detail(campaign.id)
 
     def get_campaign_detail(self, campaign_id: int) -> CampaignDetailDTO:
@@ -235,10 +244,21 @@ class StreamEditorService:
             else f"{base_url.rstrip('/')}/{campaign.alias}"
         )
 
+        # F3: Directly query Stream from database instead of stale identity collection
+        streams = (
+            self.db.query(Stream).filter_by(campaign_id=campaign.id).order_by(Stream.position).all()
+        )
+
         stream_dtos = []
-        for s in sorted(campaign.streams, key=lambda x: x.position):
+        for s in streams:
+            stream_offers = (
+                self.db.query(StreamOffer)
+                .filter_by(stream_id=s.id)
+                .order_by(StreamOffer.position, StreamOffer.offer_id)
+                .all()
+            )
             offer_dtos = []
-            for so in sorted(s.stream_offers, key=lambda x: (x.position, x.offer_id)):
+            for so in stream_offers:
                 offer_dtos.append(
                     StreamOfferDTO(
                         id=so.id,
@@ -281,7 +301,13 @@ class StreamEditorService:
             streams=stream_dtos,
         )
 
-    def _verify_revision(self, stream: Stream, expected_revision: int) -> None:
+    def _verify_revision_and_state(self, stream: Stream, expected_revision: int) -> None:
+        # F5: Lock modifications during in-flight network states
+        if stream.sync_status in ("publishing", "verifying", "unknown"):
+            raise EditorConflictError(
+                f"Stream is locked in state '{stream.sync_status}'. Modifications blocked until sync completes."
+            )
+
         if stream.revision != expected_revision:
             raise EditorConflictError(
                 f"Conflict: stream revision changed (expected {expected_revision}, current {stream.revision}). Reload required."
@@ -292,9 +318,8 @@ class StreamEditorService:
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
 
-        self._verify_revision(stream, expected_revision)
+        self._verify_revision_and_state(stream, expected_revision)
 
-        # Check if offer is already active or in archive
         existing_so = (
             self.db.query(StreamOffer)
             .join(Offer)
@@ -305,10 +330,8 @@ class StreamEditorService:
         if existing_so:
             if existing_so.draft_state == "active":
                 raise EditorValidationError(f"Offer #{offer_id} is already active in this stream")
-            # If in archive, bring it back
             return await self.bring_back_offer(stream_id, offer_id, expected_revision)
 
-        # Lookup offer metadata
         local_offer = self.db.query(Offer).filter_by(remote_offer_id=offer_id).first()
         if not local_offer:
             try:
@@ -338,7 +361,6 @@ class StreamEditorService:
         self.db.add(new_so)
         self.db.flush()
 
-        # Recalculate weights
         self._recalculate_stream_weights(stream)
         stream.revision += 1
         stream.sync_status = "dirty"
@@ -354,7 +376,7 @@ class StreamEditorService:
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
 
-        self._verify_revision(stream, expected_revision)
+        self._verify_revision_and_state(stream, expected_revision)
 
         so = (
             self.db.query(StreamOffer)
@@ -365,18 +387,15 @@ class StreamEditorService:
         if not so or so.draft_state != "active":
             raise EditorValidationError(f"Active offer #{offer_id} not found in this stream")
 
-        # Invariant: cannot remove the last active offer
         active_count = sum(1 for item in stream.stream_offers if item.draft_state == "active")
         if active_count <= 1:
             raise EditorValidationError("Cannot remove the last active offer in the stream")
 
-        # Mark removed, free pinned status and set share = 0
         so.draft_state = "removed"
         so.draft_share = 0
         so.draft_pinned = False
         so.archive_reason = "local_remove"
 
-        # Recalculate weights
         self._recalculate_stream_weights(stream)
         stream.revision += 1
         stream.sync_status = "dirty"
@@ -392,7 +411,7 @@ class StreamEditorService:
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
 
-        self._verify_revision(stream, expected_revision)
+        self._verify_revision_and_state(stream, expected_revision)
 
         so = (
             self.db.query(StreamOffer)
@@ -403,7 +422,6 @@ class StreamEditorService:
         if not so or so.draft_state != "removed":
             raise EditorValidationError(f"Archived offer #{offer_id} not found in this stream")
 
-        # Restore to active, unpinned
         so.draft_state = "active"
         so.draft_pinned = False
         so.archive_reason = None
@@ -428,7 +446,7 @@ class StreamEditorService:
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
 
-        self._verify_revision(stream, expected_revision)
+        self._verify_revision_and_state(stream, expected_revision)
 
         so = (
             self.db.query(StreamOffer)
@@ -443,7 +461,6 @@ class StreamEditorService:
             if share < 0 or share > 100:
                 raise EditorValidationError("Share must be an integer between 0 and 100")
             so.draft_share = share
-            # Setting a specific share implicitly pins it
             so.draft_pinned = True
 
         if is_pinned is not None:
@@ -462,14 +479,11 @@ class StreamEditorService:
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
 
-        # Block cancel if currently publishing
         if stream.sync_status in ("publishing", "verifying", "unknown"):
             raise EditorConflictError(f"Cannot cancel stream while in '{stream.sync_status}' state")
 
-        # Restore baseline for each offer
         for so in list(stream.stream_offers):
             if not so.has_been_published:
-                # Newly added, never published offer -> remove from draft completely
                 self.db.delete(so)
             else:
                 so.draft_share = so.baseline_share
@@ -487,7 +501,6 @@ class StreamEditorService:
         return next(s for s in detail.streams if s.id == stream.id)
 
     def _recalculate_stream_weights(self, stream: Stream) -> None:
-        """Helper to run calculate_weights and apply to stream_offers in memory before commit."""
         self.db.flush()
         stream_offers = self.db.query(StreamOffer).filter_by(stream_id=stream.id).all()
         states = [
