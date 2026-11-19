@@ -40,3 +40,4 @@ data/*
 Thumbs.db
 
 NEXT_AGENT_PROMPT.md
+.TASKS/
