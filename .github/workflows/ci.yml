@@ -42,13 +42,13 @@ jobs:
 
       - name: Test migrations on clean temporary database
         env:
-          DATABASE_URL: sqlite:////tmp/ci_test.db
+          DATABASE_URL: "sqlite:////tmp/ci_test.db"
         run: |
           uv run --locked alembic upgrade head
 
       - name: Run unit & API tests
         env:
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: "sqlite:///:memory:"
           APP_ENV: testing
         run: |
           uv run --locked pytest -v
