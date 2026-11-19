@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+
+{% block title %}Создание кампании — Keitaro Campaign Manager{% endblock %}
+{% block page_title %}Создание кампании{% endblock %}
+
+{% block content %}
+<div class="creator-grid">
+  <!-- Left Column: Form -->
+  <section class="card form-card">
+    <div class="card-header">
+      <h2 class="card-title">Параметры новой кампании</h2>
+      <p class="card-subtitle">Кампания создаётся с обязательным префиксом и двумя маршрутизирующими потоками.</p>
+    </div>
+
+    <form id="creatorForm" class="creator-form" novalidate>
+      <!-- Name -->
+      <div class="form-group">
+        <label for="campaignName" class="form-label">
+          Название кампании <span class="required">*</span>
+        </label>
+        <input 
+          type="text" 
+          id="campaignName" 
+          class="form-control" 
+          placeholder="Например: promo_winter" 
+          required 
+          autocomplete="off"
+        >
+        <div class="form-help">
+          Итоговое имя в Keitaro: <strong id="namePreview">test_{{ surname }}_...</strong>
+        </div>
+        <div class="form-error" id="nameError"></div>
+      </div>
+
+      <!-- GEO -->
+      <div class="form-group">
+        <label for="campaignGeo" class="form-label">
+          GEO страны (ISO 3166-1 alpha-2) <span class="required">*</span>
+        </label>
+        <input 
+          type="text" 
+          id="campaignGeo" 
+          class="form-control" 
+          placeholder="AU или список через запятую: MX,AU,RO" 
+          required 
+          autocomplete="off"
+        >
+        <div class="form-help">Укажите один код или несколько через запятую.</div>
+        <div class="form-error" id="geoError"></div>
+      </div>
+
+      <!-- Offer Selection Combobox -->
+      <div class="form-group">
+        <label for="offerSearchInput" class="form-label">
+          Целевой оффер (Flow 2) <span class="required">*</span>
+        </label>
+        <div class="combobox-wrapper">
+          <input 
+            type="text" 
+            id="offerSearchInput" 
+            class="form-control" 
+            placeholder="Поиск по ID или названию оффера..." 
+            autocomplete="off"
+          >
+          <input type="hidden" id="selectedOfferId" required>
+          <div id="offerDropdown" class="combobox-dropdown hidden"></div>
+        </div>
+        <div class="selected-badge hidden" id="selectedOfferBadge">
+          <span id="selectedOfferText">Оффер не выбран</span>
+          <button type="button" class="btn-clear" id="clearOfferBtn" aria-label="Сбросить оффер">&times;</button>
+        </div>
+        <div class="form-error" id="offerError"></div>
+      </div>
+
+      <!-- Optional Target Settings: Domain, Group, Traffic Source -->
+      <div class="settings-group">
+        <div class="group-title">Параметры Keitaro</div>
+        
+        <div class="form-row">
+          <div class="form-group col">
+            <label for="domainSelect" class="form-label">Домен</label>
+            <select id="domainSelect" class="form-control">
+              <option value="">Загрузка доменов...</option>
+            </select>
+          </div>
+
+          <div class="form-group col">
+            <label for="groupSelect" class="form-label">Группа кампаний</label>
+            <select id="groupSelect" class="form-control">
+              <option value="">Загрузка групп...</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="sourceSelect" class="form-label">Источник трафика</label>
+          <select id="sourceSelect" class="form-control">
+            <option value="">Загрузка источников...</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Submit button -->
+      <div class="form-actions">
+        <button type="submit" id="submitCreateBtn" class="btn btn-primary">
+          <span class="btn-spinner hidden" id="submitSpinner"></span>
+          <span class="btn-text" id="submitBtnText">Создать кампанию</span>
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Right Column: Routing Preview & Result -->
+  <section class="card preview-card">
+    <div class="card-header">
+      <h2 class="card-title">Маршрутизация</h2>
+      <span class="badge badge-preview" id="previewBadge">Предпросмотр</span>
+    </div>
+
+    <!-- Live Preview Box -->
+    <div class="routing-preview-box" id="routingPreviewBox">
+      <div class="flow-item">
+        <div class="flow-header">
+          <span class="flow-tag tag-flow1">Flow 1</span>
+          <span class="flow-mode">Country Filter (Accept)</span>
+        </div>
+        <div class="flow-body">
+          <div class="flow-condition">
+            Страны: <strong id="previewGeoText">не указаны</strong>
+          </div>
+          <div class="flow-arrow">&darr; Редирект</div>
+          <div class="flow-destination">
+            <code>https://google.com/</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-divider"></div>
+
+      <div class="flow-item">
+        <div class="flow-header">
+          <span class="flow-tag tag-flow2">Flow 2</span>
+          <span class="flow-mode">Default Fallback</span>
+        </div>
+        <div class="flow-body">
+          <div class="flow-condition">Все остальные посетители</div>
+          <div class="flow-arrow">&darr; Оффер (доля 100%)</div>
+          <div class="flow-destination">
+            <strong id="previewOfferText">Оффер не выбран</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Creation Result Box (Hidden initially) -->
+    <div class="creation-result-box hidden" id="creationResultBox">
+      <div class="result-success-header">
+        <svg class="success-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        <h3>Кампания успешно создана!</h3>
+      </div>
+
+      <div class="result-details">
+        <div class="result-row">
+          <span class="result-label">Campaign ID:</span>
+          <span class="result-value" id="resultCampaignId">-</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Имя кампании:</span>
+          <span class="result-value" id="resultCampaignName">-</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Tracking URL:</span>
+          <div class="url-copy-wrapper">
+            <input type="text" id="resultTrackingUrl" class="form-control url-input" readonly>
+            <button type="button" id="copyUrlBtn" class="btn btn-secondary btn-sm">Копировать</button>
+          </div>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Потоки в KT:</span>
+          <span class="result-value" id="resultFlowIds">-</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Статус проверки:</span>
+          <span class="badge badge-success" id="resultVerificationStatus">Проверено</span>
+        </div>
+      </div>
+
+      <div class="result-actions">
+        <a id="goToEditorLink" href="/editor" class="btn btn-primary">Перейти в Редактор кампании &rarr;</a>
+        <button type="button" id="createAnotherBtn" class="btn btn-secondary">Создать ещё одну</button>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/creator.js"></script>
+{% endblock %}

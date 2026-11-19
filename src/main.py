@@ -5,17 +5,24 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from src.api.routes_campaigns import router as campaigns_router
 from src.api.routes_health import router as health_router
+from src.api.routes_streams import router as streams_router
 from src.core.config import settings
 from src.core.database import Base, engine
 from src.core.logging import logger, setup_logging
+from src.web.routes_ui import router as ui_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize logger
     setup_logging()
-    logger.info("Starting Keitaro Campaign Manager (version=%s, env=%s)", settings.APP_VERSION, settings.APP_ENV)
+    logger.info(
+        "Starting Keitaro Campaign Manager (version=%s, env=%s)",
+        settings.APP_VERSION,
+        settings.APP_ENV,
+    )
 
     # Auto-create tables for development / initial skeleton
     Base.metadata.create_all(bind=engine)
@@ -44,6 +51,9 @@ def create_app() -> FastAPI:
 
     # Core health & diagnostics router
     app.include_router(health_router)
+    app.include_router(campaigns_router)
+    app.include_router(streams_router)
+    app.include_router(ui_router)
 
     # Static assets directory
     static_dir = os.path.join(os.path.dirname(__file__), "web", "static")

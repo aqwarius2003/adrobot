@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Редактор кампаний — Keitaro Campaign Manager{% endblock %}
+{% block page_title %}Редактор кампаний{% endblock %}
+
+{% block content %}
+<div class="editor-container">
+  <!-- Top Section: Campaign Selector & Global Fetch -->
+  <section class="card campaign-select-card">
+    <div class="campaign-select-row">
+      <div class="campaign-input-group">
+        <label for="campaignSelect" class="form-label">Выберите кампанию для редактирования:</label>
+        <div class="combobox-wrapper">
+          <select id="campaignSelect" class="form-control">
+            <option value="">-- Выберите кампанию --</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="campaign-actions-group">
+        <button type="button" id="fetchStreamsBtn" class="btn btn-primary" disabled>
+          <span class="btn-spinner hidden" id="fetchSpinner"></span>
+          <span class="btn-text">Fetch Streams</span>
+        </button>
+      </div>
+
+      <div class="campaign-sync-info" id="campaignSyncInfo">
+        <span class="info-label">Синхронизация с KT:</span>
+        <span class="info-value" id="lastSyncTime">Не загружалось</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Notice Banner (for conflict / dirty / warnings) -->
+  <div id="editorNotice" class="editor-notice hidden"></div>
+
+  <!-- Streams Container -->
+  <div id="streamsContainer" class="streams-container">
+    <!-- Initial Empty State -->
+    <div class="empty-state" id="emptyStateBox">
+      <div class="empty-icon">&#8645;</div>
+      <h3>Выберите кампанию и нажмите «Fetch Streams»</h3>
+      <p>Редактор загрузит актуальные потоки и офферы из Keitaro для локального управления весами и черновиком.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/editor.js"></script>
+{% endblock %}
