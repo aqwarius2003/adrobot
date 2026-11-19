@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: Lint, Test & Migration Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint with Ruff
+        run: |
+          ruff check .
+
+      - name: Test migrations on clean temporary database
+        env:
+          DATABASE_URL: sqlite:////tmp/ci_test.db
+        run: |
+          alembic upgrade head
+
+      - name: Run unit & API tests
+        env:
+          DATABASE_URL: sqlite:///:memory:
+          APP_ENV: testing
+        run: |
+          pytest -v
+
+  docker-build-and-smoke:
+    name: Docker Build & Container Smoke Test
+    runs-on: ubuntu-latest
+    needs: [lint-and-test]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          load: true
+          tags: adrobot:${{ github.sha }}
+
+      - name: Smoke test container /api/health
+        run: |
+          docker run -d --name smoke-app -p 8000:8000 \
+            -e APP_ENV=production \
+            -e COMMIT_SHA=${{ github.sha }} \
+            adrobot:${{ github.sha }}
+
+          # Wait for container startup
+          sleep 5
+
+          # Verify healthcheck endpoint
+          HEALTH_JSON=$(curl -fsS http://localhost:8000/api/health)
+          echo "Health response: $HEALTH_JSON"
+
+          # Check json response contents
+          echo "$HEALTH_JSON" | grep -q '"status":"ok"' || (echo "Health check failed!" && exit 1)
+          echo "$HEALTH_JSON" | grep -q '"database":"connected"' || (echo "DB check failed!" && exit 1)
+
+          docker stop smoke-app
+          docker rm smoke-app

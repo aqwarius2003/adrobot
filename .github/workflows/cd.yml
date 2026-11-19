@@ -1,0 +1,79 @@
+name: CD Staging Deployment
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-and-deploy:
+    name: Build GHCR Image & Deploy Staging
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase repository name for docker tag
+        id: repo_name
+        run: |
+          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - name: Build and push container image to GHCR
+        id: build_push
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+
+      - name: Output Image Digest and Deployment Info
+        run: |
+          echo "=========================================="
+          echo "Image Digest: ${{ steps.build_push.outputs.digest }}"
+          echo "Image Tag: ${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "=========================================="
+
+      - name: Verify Staging Container Run
+        run: |
+          # Pull by digest/sha to ensure immutability
+          docker pull ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+          # Run staging container instance with persistent volume
+          docker volume create staging_persistent_data
+          docker run -d --name staging-app -p 8000:8000 \
+            -v staging_persistent_data:/app/data \
+            -e APP_ENV=staging \
+            -e COMMIT_SHA=${{ github.sha }} \
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+          sleep 5
+
+          # Verify staging health endpoint
+          STAGING_HEALTH=$(curl -fsS http://localhost:8000/api/health)
+          echo "Staging Health Response: $STAGING_HEALTH"
+          echo "$STAGING_HEALTH" | grep -q '"status":"ok"' || (echo "Staging health verification failed!" && exit 1)
+
+          docker stop staging-app
+          docker rm staging-app
