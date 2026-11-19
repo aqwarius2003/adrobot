@@ -350,14 +350,16 @@ async def test_demo_fault_scenarios(simulator_server: str, test_db: Session):
 
 def test_mode_credential_isolation():
     """Verify demo mode never uses or leaks real credentials."""
-    # When KT_MODE == 'demo'
-    settings.KT_MODE = "demo"
-    assert settings.is_demo_mode is True
-    assert settings.effective_api_key == "demo-api-key"
-    assert "tracker.example" not in settings.normalized_base_url
-    assert "8001" in settings.normalized_base_url
-    assert settings.effective_database_url == "sqlite:///./data/demo_app.db"
-
-    # Restore to real
-    settings.KT_MODE = "real"
-    assert settings.is_demo_mode is False
+    orig_url = settings.DATABASE_URL
+    orig_mode = settings.KT_MODE
+    try:
+        settings.DATABASE_URL = "sqlite:///./data/app.db"
+        settings.KT_MODE = "demo"
+        assert settings.is_demo_mode is True
+        assert settings.effective_api_key == "demo-api-key"
+        assert "tracker.example" not in settings.normalized_base_url
+        assert "8001" in settings.normalized_base_url
+        assert settings.effective_database_url == "sqlite:///./data/demo_app.db"
+    finally:
+        settings.DATABASE_URL = orig_url
+        settings.KT_MODE = orig_mode

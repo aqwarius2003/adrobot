@@ -22,14 +22,18 @@ if db_url.startswith("sqlite"):
             os.makedirs(dir_name, exist_ok=True)
 
 connect_args = {}
+engine_kwargs: dict = {"future": True, "pool_pre_ping": True}
 if db_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
+    if ":memory:" in db_url:
+        from sqlalchemy.pool import StaticPool
+
+        engine_kwargs["poolclass"] = StaticPool
 
 engine = create_engine(
     db_url,
     connect_args=connect_args,
-    future=True,
-    pool_pre_ping=True,
+    **engine_kwargs,
 )
 
 

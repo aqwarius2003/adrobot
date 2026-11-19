@@ -7,7 +7,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.core.config import settings
+from src.core.database import Base, engine
 from src.main import app
+
+
+@pytest.fixture(autouse=True)
+def setup_tables():
+    Base.metadata.create_all(bind=engine)
+    yield
+
 
 client = TestClient(app)
 

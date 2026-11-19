@@ -50,6 +50,9 @@ async def demo_reset(db: Session = Depends(get_db)) -> dict[str, Any]:
         ) from exc
 
     # 2. Reset local application tables in demo database
+    from src.domain.models import Base
+
+    Base.metadata.create_all(bind=db.get_bind())
     db.query(StreamOffer).delete()
     db.query(Stream).delete()
     db.query(Campaign).delete()
