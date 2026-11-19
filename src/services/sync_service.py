@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from src.core.logging import logger
-from src.domain.models import Operation, Stream
+from src.domain.models import Operation, Stream, StreamOffer
 from src.domain.schemas import StreamDTO
 from src.services.editor_service import StreamEditorService
 from src.services.keitaro_client import KeitaroApiError, KeitaroGateway
@@ -83,7 +83,12 @@ class StreamSyncService:
                 f"Stream revision changed (expected {expected_revision}, current {stream.revision}). Reload required."
             )
 
-        active_offers = [so for so in stream.stream_offers if so.draft_state == "active"]
+        active_offers = (
+            self.db.query(StreamOffer)
+            .filter_by(stream_id=stream.id, draft_state="active")
+            .order_by(StreamOffer.position)
+            .all()
+        )
         if not active_offers:
             raise ValueError("Cannot push stream with no active offers")
 

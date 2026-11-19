@@ -11,20 +11,22 @@ class Base(DeclarativeBase):
     pass
 
 
+db_url = settings.effective_database_url
+
 # Ensure data directory exists if using sqlite file
-if settings.DATABASE_URL.startswith("sqlite"):
-    path = settings.DATABASE_URL.replace("sqlite:///", "")
+if db_url.startswith("sqlite"):
+    path = db_url.replace("sqlite:///", "")
     if path and not path.startswith(":memory:"):
         dir_name = os.path.dirname(path)
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
 
 connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
+if db_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    db_url,
     connect_args=connect_args,
     future=True,
     pool_pre_ping=True,
@@ -34,7 +36,7 @@ engine = create_engine(
 # Enable WAL mode for SQLite for better concurrency
 @event.listens_for(engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
-    if settings.DATABASE_URL.startswith("sqlite"):
+    if db_url.startswith("sqlite"):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")

@@ -1,13 +1,18 @@
 <!DOCTYPE html>
 <html lang="ru">
+
 <head>
   <meta charset="UTF-8">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Campaign Manager{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 </head>
+
 <body class="app-body">
   <div class="app-container">
     <!-- Sidebar -->
@@ -21,11 +26,16 @@
       </div>
       <nav class="sidebar-nav">
         <a href="/creator" class="nav-item {% if active_page == 'creator' %}active{% endif %}">
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
           <span>Создание кампании</span>
         </a>
         <a href="/editor" class="nav-item {% if active_page == 'editor' %}active{% endif %}">
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
           <span>Редактор кампаний</span>
         </a>
       </nav>
@@ -43,17 +53,29 @@
       <header class="app-topbar">
         <div class="topbar-left">
           <button class="menu-btn" id="mobileMenuOpen" aria-label="Открыть меню">
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
           </button>
           <h1 class="page-title">{% block page_title %}Campaign Manager{% endblock %}</h1>
         </div>
         <div class="topbar-right">
+          {% if is_demo %}
+          <div class="demo-badge" data-tooltip="Режим демонстрации на симуляторе Keitaro. Все операции изолированы от реального трекера.">
+            <span class="demo-badge-dot"></span>
+            <span class="demo-badge-text">Демо · данные симулятора</span>
+          </div>
+          {% else %}
           <div class="status-indicator" id="ktConnectionStatus">
-            <span class="status-dot {% if keitaro_configured %}dot-configured{% else %}dot-unverified{% endif %}"></span>
+            <span
+              class="status-dot {% if keitaro_configured %}dot-configured{% else %}dot-unverified{% endif %}"></span>
             <span class="status-text">
-              {% if keitaro_configured %}KT Настроен{% else %}KT Не проверено{% endif %}
+              {% if keitaro_configured %}Keitaro · реальное подключение{% else %}KT Не проверено{% endif %}
             </span>
           </div>
+          {% endif %}
         </div>
       </header>
 
@@ -92,8 +114,16 @@
         setTimeout(() => toast.remove(), 300);
       }, 4000);
     }
+
+    // Global application configuration
+    window.APP_CONFIG = {
+      is_demo: {{ 'true' if is_demo else 'false' }},
+      kt_mode: "{{ kt_mode }}",
+      surname: "{{ surname }}"
+    };
   </script>
   <script src="/static/js/tooltip.js"></script>
   {% block scripts %}{% endblock %}
 </body>
+
 </html>

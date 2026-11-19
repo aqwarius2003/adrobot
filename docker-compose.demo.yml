@@ -1,0 +1,52 @@
+services:
+  simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adrobot:latest
+    container_name: adrobot-simulator
+    restart: unless-stopped
+    command: ["uv", "run", "uvicorn", "src.simulator.app:simulator_app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    environment:
+      - CAMPAIGN_SURNAME=${CAMPAIGN_SURNAME:-novikov}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adrobot:latest
+    container_name: adrobot-demo-app
+    restart: unless-stopped
+    depends_on:
+      simulator:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - KT_MODE=demo
+      - DEMO_SIMULATOR_URL=http://simulator:8001
+      - DATABASE_URL=sqlite:////app/data/demo_app.db
+      - CAMPAIGN_SURNAME=${CAMPAIGN_SURNAME:-novikov}
+    volumes:
+      - adrobot_demo_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  adrobot_demo_data:
+    name: adrobot_demo_persistent_data

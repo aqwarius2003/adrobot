@@ -15,6 +15,7 @@ class HealthResponse(BaseModel):
     version: str
     commit_sha: str
     keitaro_configured: bool
+    kt_mode: str
     environment: str
 
 
@@ -32,5 +33,6 @@ def get_health(db: Session = Depends(get_db)) -> HealthResponse:
         version=settings.APP_VERSION,
         commit_sha=settings.COMMIT_SHA,
         keitaro_configured=settings.is_keitaro_configured,
+        kt_mode=settings.KT_MODE,
         environment=settings.APP_ENV,
     )

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.api.routes_campaigns import router as campaigns_router
+from src.api.routes_demo import router as demo_router
 from src.api.routes_health import router as health_router
 from src.api.routes_streams import router as streams_router
 from src.core.config import settings
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(campaigns_router)
     app.include_router(streams_router)
+    app.include_router(demo_router)
     app.include_router(ui_router)
 
     # Static assets directory

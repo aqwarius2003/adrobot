@@ -18,6 +18,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Tracker connection mode: 'real' (live Keitaro) or 'demo' (autonomous simulator)
+    KT_MODE: str = Field(
+        default="real",
+        description="Keitaro tracker mode: 'real' (live Keitaro tracker) or 'demo' (autonomous simulator)",
+    )
+    DEMO_SIMULATOR_URL: str = Field(
+        default="http://127.0.0.1:8001",
+        description="URL of the autonomous Keitaro simulator service in demo mode",
+    )
+
     # Keitaro settings
     KEITARO_BASE_URL: str = Field(
         default="https://tracker.example",
@@ -50,7 +60,27 @@ class Settings(BaseSettings):
     APP_VERSION: str = Field(default="0.1.0")
 
     @property
+    def is_demo_mode(self) -> bool:
+        return self.KT_MODE.strip().lower() == "demo"
+
+    @property
+    def effective_api_key(self) -> str:
+        # In demo mode, NEVER send real Keitaro credentials
+        if self.is_demo_mode:
+            return "demo-api-key"
+        return self.KEITARO_API_KEY
+
+    @property
+    def effective_database_url(self) -> str:
+        # Maintain isolated database for demo mode unless explicitly overridden
+        if self.is_demo_mode and self.DATABASE_URL == "sqlite:///./data/app.db":
+            return "sqlite:///./data/demo_app.db"
+        return self.DATABASE_URL
+
+    @property
     def is_keitaro_configured(self) -> bool:
+        if self.is_demo_mode:
+            return True
         return bool(
             self.KEITARO_API_KEY
             and self.KEITARO_BASE_URL
@@ -60,7 +90,8 @@ class Settings(BaseSettings):
     @property
     def normalized_base_url(self) -> str:
         """Strip trailing slashes, /admin, /admin_api/v1 if accidentally included."""
-        url = self.KEITARO_BASE_URL.strip().rstrip("/")
+        target_url = self.DEMO_SIMULATOR_URL if self.is_demo_mode else self.KEITARO_BASE_URL
+        url = target_url.strip().rstrip("/")
         if url.endswith("/admin_api/v1"):
             url = url[: -len("/admin_api/v1")]
         elif url.endswith("/admin"):

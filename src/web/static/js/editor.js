@@ -29,6 +29,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (paramCampaignId) {
         fetchStreamsBtn.disabled = false;
         fetchStreams(parseInt(paramCampaignId, 10));
+      } else if (window.APP_CONFIG && window.APP_CONFIG.is_demo && campaigns.length > 0) {
+        currentCampaignId = campaigns[0].remote_campaign_id;
+        campaignSelect.value = currentCampaignId;
+        fetchStreamsBtn.disabled = false;
       }
     } catch (err) {
       console.warn('Could not load campaigns:', err);
@@ -147,9 +151,13 @@ document.addEventListener('DOMContentLoaded', () => {
     actions.className = 'stream-actions';
 
     if (stream.is_managed) {
+      const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
       const pushBtn = document.createElement('button');
       pushBtn.className = 'btn btn-primary btn-sm';
-      pushBtn.textContent = 'Push to KT';
+      pushBtn.textContent = isDemo ? 'Push to Demo' : 'Push to KT';
+      if (isDemo) {
+        pushBtn.setAttribute('data-tooltip', 'Опубликовать активные офферы в автономный демо-симулятор');
+      }
       pushBtn.disabled = !isDirty || stream.sync_status === 'publishing';
       pushBtn.addEventListener('click', () => pushStream(stream));
 
@@ -448,7 +456,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const updatedStream = await res.json();
       if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка публикации потока в KT');
       updateStreamInView(updatedStream);
-      showToast('Поток успешно опубликован в Keitaro и подтверждён!', 'success');
+      const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
+      const successMsg = isDemo
+        ? `Поток успешно опубликован в демо-трекер (Flow ID: ${updatedStream.id}) и подтверждён read-back!`
+        : 'Поток успешно опубликован в Keitaro и подтверждён!';
+      showToast(successMsg, 'success');
     } catch (err) {
       showToast(err.message, 'error');
       if (err.message.includes('Conflict')) {
@@ -469,5 +481,74 @@ document.addEventListener('DOMContentLoaded', () => {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  // --- Demo Controls Handling (strictly active in demo mode) ---
+  const demoResetBtn = document.getElementById('demoResetBtn');
+  if (demoResetBtn) {
+    demoResetBtn.addEventListener('click', async () => {
+      try {
+        demoResetBtn.disabled = true;
+        const res = await fetch('/api/demo/reset', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Ошибка сброса демо');
+        showToast('Демо-состояние успешно сброшено к исходному seed (34/33/33)!', 'success');
+        clearNotice();
+        if (currentCampaignId) {
+          fetchStreams(currentCampaignId);
+        } else {
+          loadCampaigns();
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        demoResetBtn.disabled = false;
+      }
+    });
+  }
+
+  const demoSimulateDeleteBtn = document.getElementById('demoSimulateDeleteBtn');
+  if (demoSimulateDeleteBtn) {
+    demoSimulateDeleteBtn.addEventListener('click', async () => {
+      try {
+        demoSimulateDeleteBtn.disabled = true;
+        // Step 8: Remove offer 105 (or 103) from stream 11 in simulator
+        const res = await fetch('/api/demo/simulate-delete-stream-offer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stream_id: 11, offer_id: 105 }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Ошибка симуляции удаления');
+        showToast('Оффер #5 удален из потока симулятора! Нажмите Fetch Streams для проверки синхронизации.', 'info');
+        showNotice('Внимание: В симуляторе из потока удален оффер #5. Нажмите «Fetch Streams», чтобы зафиксировать внешнее изменение.', 'warning');
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        demoSimulateDeleteBtn.disabled = false;
+      }
+    });
+  }
+
+  const demoSimulateDisableBtn = document.getElementById('demoSimulateDisableBtn');
+  if (demoSimulateDisableBtn) {
+    demoSimulateDisableBtn.addEventListener('click', async () => {
+      try {
+        demoSimulateDisableBtn.disabled = true;
+        // Step 9: Disable offer 105 in global catalog
+        const res = await fetch('/api/demo/simulate-disable-global-offer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ offer_id: 105, available: false }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Ошибка отключения оффера');
+        showToast('Оффер #5 скрыт в глобальном каталоге симулятора. Теперь при попытке Bring back будет показано объяснение!', 'info');
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        demoSimulateDisableBtn.disabled = false;
+      }
+    });
   }
 });

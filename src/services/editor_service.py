@@ -422,6 +422,24 @@ class StreamEditorService:
         if not so or so.draft_state != "removed":
             raise EditorValidationError(f"Archived offer #{offer_id} not found in this stream")
 
+        # Step 9: Verify the global offer is still available in Keitaro catalog
+        try:
+            kt_offer = await self.kt_client.get_offer(offer_id)
+            if (
+                not kt_offer
+                or kt_offer.get("state") == "deleted"
+                or kt_offer.get("is_available") is False
+            ):
+                raise EditorValidationError(
+                    f"Оффер #{offer_id} недоступен в каталоге Keitaro (удален или заблокирован). Привязка сохранена в архиве."
+                )
+        except Exception as exc:
+            if isinstance(exc, EditorValidationError):
+                raise
+            raise EditorValidationError(
+                f"Оффер #{offer_id} недоступен в каталоге Keitaro: {exc}. Привязка сохранена в архиве."
+            ) from exc
+
         so.draft_state = "active"
         so.draft_pinned = False
         so.archive_reason = None
@@ -485,6 +503,8 @@ class StreamEditorService:
         for so in list(stream.stream_offers):
             if not so.has_been_published:
                 self.db.delete(so)
+                if so in stream.stream_offers:
+                    stream.stream_offers.remove(so)
             else:
                 so.draft_share = so.baseline_share
                 so.draft_state = so.baseline_state
@@ -493,6 +513,8 @@ class StreamEditorService:
                     None if so.baseline_state == "active" else (so.archive_reason or "local_remove")
                 )
 
+        self.db.flush()
+        self.db.expire(stream, ["stream_offers"])
         stream.sync_status = "clean"
         stream.revision += 1
         self.db.commit()

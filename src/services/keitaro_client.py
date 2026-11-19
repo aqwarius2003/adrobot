@@ -60,7 +60,7 @@ class KeitaroClient:
         timeout: float = 12.0,
     ):
         self.base_url = (base_url or settings.normalized_base_url).rstrip("/")
-        self.api_key = api_key or settings.KEITARO_API_KEY
+        self.api_key = api_key if api_key is not None else settings.effective_api_key
         self.api_root = f"{self.base_url}/admin_api/v1"
         self.timeout = timeout
 

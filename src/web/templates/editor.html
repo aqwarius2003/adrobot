@@ -31,6 +31,30 @@
     </div>
   </section>
 
+  {% if is_demo %}
+  <!-- Demo Controls Bar (visible strictly in demo mode) -->
+  <section class="card demo-controls-card">
+    <div class="demo-controls-header">
+      <div class="demo-controls-title">
+        <span class="demo-pill">ДЕМО</span>
+        <strong>Управление симулятором Keitaro</strong>
+        <span class="demo-hint">(для воспроизведения сценариев демонстрации)</span>
+      </div>
+      <div class="demo-controls-actions">
+        <button type="button" id="demoResetBtn" class="btn btn-outline-warning btn-sm" data-tooltip="Сбросить симулятор и локальную БД к начальному состоянию (Flow 2: 34/33/33, 5 офферов)">
+          🔄 Сброс демо (Reset)
+        </button>
+        <button type="button" id="demoSimulateDeleteBtn" class="btn btn-outline-secondary btn-sm" data-tooltip="Удалить привязку оффера #5 из потока в симуляторе (без удаления из каталога) для проверки Fetch">
+          ✂️ Удалить оффер #5 в трекере
+        </button>
+        <button type="button" id="demoSimulateDisableBtn" class="btn btn-outline-secondary btn-sm" data-tooltip="Скрыть оффер #5 в каталоге симулятора для проверки ошибки Bring back">
+          🚫 Скрыть оффер #5 в каталоге
+        </button>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
   <!-- Notice Banner (for conflict / dirty / warnings) -->
   <div id="editorNotice" class="editor-notice hidden"></div>
 

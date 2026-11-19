@@ -27,6 +27,8 @@ def creator_page(request: Request):
             "surname": settings.CAMPAIGN_SURNAME,
             "version": settings.APP_VERSION,
             "keitaro_configured": settings.is_keitaro_configured,
+            "kt_mode": settings.KT_MODE,
+            "is_demo": settings.is_demo_mode,
         },
     )
 
@@ -41,5 +43,7 @@ def editor_page(request: Request):
             "surname": settings.CAMPAIGN_SURNAME,
             "version": settings.APP_VERSION,
             "keitaro_configured": settings.is_keitaro_configured,
+            "kt_mode": settings.KT_MODE,
+            "is_demo": settings.is_demo_mode,
         },
     )
