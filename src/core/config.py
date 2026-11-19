@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,22 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8001",
         description="URL of the autonomous Keitaro simulator service in demo mode",
     )
+    REAL_APP_URL: str | None = Field(
+        default=None,
+        description="URL of the real mode app instance, e.g. http://localhost:8000",
+    )
+    DEMO_APP_URL: str | None = Field(
+        default=None,
+        description="URL of the demo mode app instance, e.g. http://localhost:8002",
+    )
+
+    @field_validator("KT_MODE")
+    @classmethod
+    def validate_kt_mode(cls, v: str) -> str:
+        clean = v.strip().lower()
+        if clean not in ("real", "demo"):
+            raise ValueError(f"Invalid KT_MODE '{v}'. Must be either 'real' or 'demo'.")
+        return clean
 
     # Keitaro settings
     KEITARO_BASE_URL: str = Field(
@@ -72,9 +88,15 @@ class Settings(BaseSettings):
 
     @property
     def effective_database_url(self) -> str:
-        # Maintain isolated database for demo mode unless explicitly overridden
-        if self.is_demo_mode and self.DATABASE_URL == "sqlite:///./data/app.db":
-            return "sqlite:///./data/demo_app.db"
+        # Maintain strictly isolated database for demo mode across any URL configuration
+        if self.is_demo_mode:
+            if "app.db" in self.DATABASE_URL:
+                return self.DATABASE_URL.replace("app.db", "demo_app.db")
+            if self.DATABASE_URL.startswith("sqlite:///"):
+                if "_demo.db" not in self.DATABASE_URL:
+                    return self.DATABASE_URL.replace(".db", "_demo.db")
+            elif not self.DATABASE_URL.endswith("_demo"):
+                return f"{self.DATABASE_URL}_demo"
         return self.DATABASE_URL
 
     @property

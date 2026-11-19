@@ -25,12 +25,14 @@
         <button class="mobile-toggle" id="mobileMenuClose" aria-label="Закрыть меню">&times;</button>
       </div>
       <nav class="sidebar-nav">
+        {% if is_demo %}
         <a href="/creator" class="nav-item {% if active_page == 'creator' %}active{% endif %}">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 5v14M5 12h14" />
           </svg>
           <span>Создание кампании</span>
         </a>
+        {% endif %}
         <a href="/editor" class="nav-item {% if active_page == 'editor' %}active{% endif %}">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -67,14 +69,22 @@
             <span class="demo-badge-dot"></span>
             <span class="demo-badge-text">Демо · данные симулятора</span>
           </div>
+          {% if real_app_url %}
+          <a href="{{ real_app_url }}" class="btn btn-outline-secondary btn-sm mode-switch-btn" title="Перейти к рабочему экземпляру Keitaro">
+            Вернуться к Keitaro &rarr;
+          </a>
+          {% endif %}
           {% else %}
-          <div class="status-indicator" id="ktConnectionStatus">
+          <div class="status-indicator" id="ktConnectionStatus" data-tooltip="Рабочий режим. Прямое подключение к трекеру Keitaro.">
             <span
               class="status-dot {% if keitaro_configured %}dot-configured{% else %}dot-unverified{% endif %}"></span>
-            <span class="status-text">
-              {% if keitaro_configured %}Keitaro · реальное подключение{% else %}KT Не проверено{% endif %}
-            </span>
+            <span class="status-text">Keitaro · рабочий режим</span>
           </div>
+          {% if demo_app_url %}
+          <a href="{{ demo_app_url }}" class="btn btn-outline-primary btn-sm mode-switch-btn" title="Перейти к демонстрационному экземпляру с симулятором">
+            Открыть демо &rarr;
+          </a>
+          {% endif %}
           {% endif %}
         </div>
       </header>
@@ -119,7 +129,8 @@
     window.APP_CONFIG = {
       is_demo: {{ 'true' if is_demo else 'false' }},
       kt_mode: "{{ kt_mode }}",
-      surname: "{{ surname }}"
+      surname: "{{ surname }}",
+      keitaro_base_url: "{{ keitaro_base_url or '' }}"
     };
   </script>
   <script src="/static/js/tooltip.js"></script>

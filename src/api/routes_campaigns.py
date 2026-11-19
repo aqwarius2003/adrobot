@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from src.api.dependencies import get_creator_service, get_editor_service, get_keitaro_client
+from src.core.config import settings
 from src.domain.iso_countries import COUNTRY_CATALOG
 from src.domain.schemas import (
     CampaignCreateRequest,
@@ -129,6 +130,11 @@ async def create_campaign(
     request: CampaignCreateRequest,
     creator_service: CampaignCreatorService = Depends(get_creator_service),
 ) -> CampaignCreateResponse:
+    if not settings.is_demo_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="creator_unavailable_in_real_mode: Создание кампаний через интерфейс доступно только в демо-режиме (KT_MODE=demo). В рабочем режиме Keitaro поддерживается только редактирование существующих кампаний.",
+        )
     try:
         return await creator_service.create_campaign(request)
     except ValueError as exc:

@@ -5,13 +5,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const lastSyncTime = document.getElementById('lastSyncTime');
   const streamsContainer = document.getElementById('streamsContainer');
   const editorNotice = document.getElementById('editorNotice');
+  const viewInKtLink = document.getElementById('viewInKtLink');
 
   let currentCampaignId = null;
   let currentCampaignData = null;
 
-  // Check URL query parameters for auto-selection
+  // Check URL query parameters
   const urlParams = new URLSearchParams(window.location.search);
   const paramCampaignId = urlParams.get('campaign_id');
+  const paramNotice = urlParams.get('notice');
+
+  if (paramNotice === 'creator_unavailable_in_real_mode') {
+    showNotice(
+      'Создание кампаний через интерфейс доступно только в демо-режиме (KT_MODE=demo). В рабочем режиме Keitaro поддерживается только редактирование существующих кампаний.',
+      'info'
+    );
+  }
 
   // Load campaigns list
   async function loadCampaigns() {
@@ -21,18 +30,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const campaigns = await res.json();
 
       campaignSelect.innerHTML = '<option value="">-- Выберите кампанию --</option>';
-      campaigns.forEach(c => {
-        const selected = (paramCampaignId && parseInt(paramCampaignId, 10) === c.remote_campaign_id) ? 'selected' : '';
-        campaignSelect.innerHTML += `<option value="${c.remote_campaign_id}" ${selected}>[ID: ${c.remote_campaign_id}] ${c.name}</option>`;
+      campaigns.forEach((c) => {
+        const isSelected =
+          paramCampaignId && parseInt(paramCampaignId, 10) === c.remote_campaign_id;
+        const selectedAttr = isSelected ? 'selected' : '';
+        campaignSelect.innerHTML += `<option value="${c.remote_campaign_id}" ${selectedAttr}>[ID: ${c.remote_campaign_id}] ${escapeHtml(c.name)}</option>`;
       });
 
+      // Synchronize context and load campaign data
       if (paramCampaignId) {
+        currentCampaignId = parseInt(paramCampaignId, 10);
+        campaignSelect.value = currentCampaignId;
         fetchStreamsBtn.disabled = false;
-        fetchStreams(parseInt(paramCampaignId, 10));
+        await loadCampaignData(currentCampaignId);
       } else if (window.APP_CONFIG && window.APP_CONFIG.is_demo && campaigns.length > 0) {
         currentCampaignId = campaigns[0].remote_campaign_id;
         campaignSelect.value = currentCampaignId;
         fetchStreamsBtn.disabled = false;
+        await loadCampaignData(currentCampaignId);
       }
     } catch (err) {
       console.warn('Could not load campaigns:', err);
@@ -41,14 +56,96 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   loadCampaigns();
 
-  campaignSelect.addEventListener('change', () => {
+  // Load local draft / baseline for selected campaign without upstream fetch
+  async function loadCampaignData(campaignId) {
+    clearNotice();
+    updateViewInKtLink(campaignId);
+
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}`);
+      if (res.status === 404) {
+        // Campaign exists in KT list, but not imported locally yet
+        currentCampaignData = null;
+        renderUnimportedState();
+        if (lastSyncTime) lastSyncTime.textContent = 'Не синхронизировано';
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error(`Ошибка загрузки данных кампании: ${res.statusText}`);
+      }
+
+      const data = await res.json();
+      currentCampaignData = data;
+      renderCampaignStreams(data);
+      updateSyncTimeDisplay(data.last_sync_at);
+    } catch (err) {
+      console.warn('Error loading local campaign state:', err);
+      showToast(err.message, 'error');
+    }
+  }
+
+  function renderUnimportedState() {
+    streamsContainer.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">&#8645;</div>
+        <h3>Кампания не импортирована</h3>
+        <p>Локального снимка потоков ещё нет. Нажмите <strong>Fetch Streams</strong> для первичного импорта из трекера.</p>
+      </div>`;
+  }
+
+  function renderEmptyState() {
+    streamsContainer.innerHTML = `
+      <div class="empty-state" id="emptyStateBox">
+        <div class="empty-icon">&#8645;</div>
+        <h3>Выберите кампанию</h3>
+        <p>Выберите кампанию из списка выше для просмотра потоков и редактирования весов.</p>
+      </div>`;
+  }
+
+  function updateViewInKtLink(remoteCampaignId) {
+    if (!viewInKtLink) return;
+    const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
+    const ktUrl = window.APP_CONFIG && window.APP_CONFIG.keitaro_base_url;
+    if (remoteCampaignId && ktUrl && !isDemo) {
+      const cleanBase = ktUrl.replace(/\/+$/, '');
+      viewInKtLink.href = `${cleanBase}/admin/#!/campaigns/${remoteCampaignId}`;
+      viewInKtLink.classList.remove('hidden');
+    } else {
+      viewInKtLink.classList.add('hidden');
+    }
+  }
+
+  function updateSyncTimeDisplay(isoString) {
+    if (!lastSyncTime) return;
+    if (!isoString) {
+      lastSyncTime.textContent = 'Не синхронизировано';
+      return;
+    }
+    const d = new Date(isoString);
+    lastSyncTime.textContent = isNaN(d.getTime()) ? isoString : d.toLocaleTimeString();
+  }
+
+  campaignSelect.addEventListener('change', async () => {
     const val = campaignSelect.value;
     if (val) {
       currentCampaignId = parseInt(val, 10);
       fetchStreamsBtn.disabled = false;
+      const newUrl = new URL(window.location);
+      newUrl.searchParams.set('campaign_id', currentCampaignId);
+      window.history.replaceState({}, '', newUrl);
+      await loadCampaignData(currentCampaignId);
     } else {
       currentCampaignId = null;
+      currentCampaignData = null;
       fetchStreamsBtn.disabled = true;
+      const newUrl = new URL(window.location);
+      newUrl.searchParams.delete('campaign_id');
+      window.history.replaceState({}, '', newUrl);
+      renderEmptyState();
+      clearNotice();
+      updateViewInKtLink(null);
+      if (lastSyncTime) lastSyncTime.textContent = 'Не выбрана';
     }
   });
 
@@ -71,15 +168,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 409) {
-          showNotice(data.detail || 'Невозможно выполнить Fetch: имеются неопубликованные изменения.', 'conflict');
+          showNotice(
+            data.detail ||
+              'Невозможно выполнить Fetch: имеются неопубликованные изменения. Нажмите Push или Cancel.',
+            'conflict'
+          );
         }
-        throw new Error(data.detail || 'Ошибка при загрузке потоков из Keitaro');
+        throw new Error(data.detail || 'Ошибка при загрузке потоков из трекера');
       }
 
       currentCampaignData = data;
       renderCampaignStreams(data);
-      lastSyncTime.textContent = new Date().toLocaleTimeString();
-      showToast('Потоки успешно синхронизированы с Keitaro', 'success');
+      updateSyncTimeDisplay(data.last_sync_at || new Date().toISOString());
+
+      const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
+      showToast(
+        isDemo ? 'Потоки загружены из демо-симулятора' : 'Потоки успешно синхронизированы с Keitaro',
+        'success'
+      );
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
@@ -106,15 +212,54 @@ document.addEventListener('DOMContentLoaded', () => {
       streamsContainer.innerHTML = `
         <div class="empty-state">
           <h3>В кампании нет потоков</h3>
-          <p>В Keitaro не найдено потоков для этой кампании.</p>
+          <p>В трекере не найдено потоков для этой кампании.</p>
         </div>`;
       return;
     }
 
-    campaign.streams.forEach(stream => {
+    const managedStreams = campaign.streams.filter((s) => s.is_managed);
+    const unmanagedStreams = campaign.streams.filter((s) => !s.is_managed);
+
+    // Render managed streams cards first
+    managedStreams.forEach((stream) => {
       const card = createStreamCard(stream);
       streamsContainer.appendChild(card);
     });
+
+    // Render unmanaged (opaque) streams after managed streams as compact single-line rows
+    unmanagedStreams.forEach((stream) => {
+      const row = createUnmanagedStreamRow(stream);
+      streamsContainer.appendChild(row);
+    });
+  }
+
+  // Compact row for streams without editable offers (Flow 1 / redirect / opaque)
+  function createUnmanagedStreamRow(stream) {
+    const row = document.createElement('div');
+    row.className = 'unmanaged-stream-row';
+    row.id = `stream-row-${stream.id}`;
+
+    const titleInfo = document.createElement('div');
+    titleInfo.className = 'unmanaged-stream-info';
+
+    const title = document.createElement('span');
+    title.className = 'unmanaged-stream-name';
+    title.textContent = stream.name;
+
+    const idBadge = document.createElement('span');
+    idBadge.className = 'stream-id-badge';
+    idBadge.textContent = `Stream ID: ${stream.remote_stream_id}`;
+
+    titleInfo.appendChild(title);
+    titleInfo.appendChild(idBadge);
+
+    const pill = document.createElement('span');
+    pill.className = 'unmanaged-stream-pill';
+    pill.textContent = 'Нет редактируемых офферов';
+
+    row.appendChild(titleInfo);
+    row.appendChild(pill);
+    return row;
   }
 
   function createStreamCard(stream) {
@@ -156,7 +301,12 @@ document.addEventListener('DOMContentLoaded', () => {
       pushBtn.className = 'btn btn-primary btn-sm';
       pushBtn.textContent = isDemo ? 'Push to Demo' : 'Push to KT';
       if (isDemo) {
-        pushBtn.setAttribute('data-tooltip', 'Опубликовать активные офферы в автономный демо-симулятор');
+        pushBtn.setAttribute(
+          'data-tooltip',
+          'Опубликовать активные офферы в автономный демо-симулятор'
+        );
+      } else {
+        pushBtn.setAttribute('data-tooltip', 'Опубликовать активные офферы в Keitaro');
       }
       pushBtn.disabled = !isDirty || stream.sync_status === 'publishing';
       pushBtn.addEventListener('click', () => pushStream(stream));
@@ -174,17 +324,6 @@ document.addEventListener('DOMContentLoaded', () => {
     header.appendChild(headerInfo);
     header.appendChild(actions);
     card.appendChild(header);
-
-    // Body
-    if (!stream.is_managed) {
-      const opaqueBody = document.createElement('div');
-      opaqueBody.className = 'opaque-stream-body';
-      opaqueBody.innerHTML = `
-        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-        <span>Поток без редактируемых офферов (HTTP Redirect / Фильтры). Отображается только для чтения.</span>`;
-      card.appendChild(opaqueBody);
-      return card;
-    }
 
     // Managed Table
     const tableWrapper = document.createElement('div');
@@ -208,7 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let totalActiveShare = 0;
     let activeCount = 0;
 
-    stream.offers.forEach(off => {
+    stream.offers.forEach((off) => {
       const tr = document.createElement('tr');
       const isRemoved = off.state === 'removed';
       tr.className = `offer-row ${isRemoved ? 'row-removed' : ''}`;
@@ -264,7 +403,8 @@ document.addEventListener('DOMContentLoaded', () => {
       // State Pill
       const tdState = document.createElement('td');
       if (isRemoved) {
-        tdState.innerHTML = `<span class="badge badge-removed">Removed</span>`;
+        const reasonText = off.archive_reason ? ` (${off.archive_reason})` : '';
+        tdState.innerHTML = `<span class="badge badge-removed" title="${escapeHtml(off.archive_reason || '')}">Removed${escapeHtml(reasonText)}</span>`;
       } else if (off.share === 0) {
         tdState.innerHTML = `<span class="badge badge-zero" title="Трафик не выделен">0% Active</span>`;
       } else {
@@ -285,7 +425,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const removeBtn = document.createElement('button');
         removeBtn.className = 'btn btn-secondary btn-sm';
         removeBtn.textContent = 'Remove';
-        removeBtn.disabled = activeCount <= 1 && stream.offers.filter(o => o.state === 'active').length <= 1;
+        removeBtn.disabled =
+          activeCount <= 1 && stream.offers.filter((o) => o.state === 'active').length <= 1;
         removeBtn.addEventListener('click', () => removeOffer(stream, off.offer_id));
         tdActions.appendChild(removeBtn);
       }
@@ -301,31 +442,116 @@ document.addEventListener('DOMContentLoaded', () => {
     tableWrapper.appendChild(table);
     card.appendChild(tableWrapper);
 
-    // Footer
+    // Footer with Autocomplete Search
     const footer = document.createElement('div');
     footer.className = 'stream-card-footer';
 
-    // Add Offer inline search
-    const addInline = document.createElement('div');
-    addInline.className = 'add-offer-inline';
-    addInline.innerHTML = `
-      <input type="text" class="form-control inline-search-input" placeholder="Добавить оффер по ID или названию..." style="height: 30px;">
-      <button type="button" class="btn btn-secondary btn-sm inline-add-btn">Add</button>`;
+    const addCombobox = document.createElement('div');
+    addCombobox.className = 'add-offer-combobox';
 
-    const inlineInput = addInline.querySelector('.inline-search-input');
-    const inlineAddBtn = addInline.querySelector('.inline-add-btn');
+    const inputWrapper = document.createElement('div');
+    inputWrapper.style.position = 'relative';
+    inputWrapper.style.width = '280px';
 
-    inlineAddBtn.addEventListener('click', async () => {
-      const q = inlineInput.value.trim();
-      if (!q) return;
-      const offId = parseInt(q, 10);
-      if (isNaN(offId)) {
-        showToast('Пожалуйста, введите числовой ID оффера для добавления', 'error');
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'form-control inline-search-input';
+    searchInput.placeholder = 'Поиск оффера по ID или названию...';
+    searchInput.autocomplete = 'off';
+    searchInput.style.height = '32px';
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'dropdown-list hidden editor-offer-dropdown';
+
+    inputWrapper.appendChild(searchInput);
+    inputWrapper.appendChild(dropdown);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'btn btn-secondary btn-sm inline-add-btn';
+    addBtn.textContent = 'Add';
+    addBtn.disabled = true;
+
+    let selectedOffer = null;
+    let debounceTimer = null;
+
+    searchInput.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      selectedOffer = null;
+      addBtn.disabled = true;
+
+      const q = searchInput.value.trim();
+      if (q.length < 1) {
+        dropdown.classList.add('hidden');
         return;
       }
-      await addOffer(stream, offId);
-      inlineInput.value = '';
+
+      debounceTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/offers?search=${encodeURIComponent(q)}`);
+          if (!res.ok) throw new Error('Search failed');
+          const offers = await res.json();
+          renderEditorOfferDropdown(offers, dropdown, searchInput, addBtn, (chosen) => {
+            selectedOffer = chosen;
+          });
+        } catch (err) {
+          console.warn('Editor offer search error:', err);
+        }
+      }, 250);
     });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (!selectedOffer) {
+          const firstItem = dropdown.querySelector('.dropdown-item[data-id]');
+          if (firstItem) {
+            firstItem.click();
+            addBtn.click();
+          }
+        } else {
+          addBtn.click();
+        }
+      } else if (e.key === 'Escape') {
+        dropdown.classList.add('hidden');
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!inputWrapper.contains(e.target)) {
+        dropdown.classList.add('hidden');
+      }
+    });
+
+    addBtn.addEventListener('click', async () => {
+      if (!selectedOffer) return;
+      const targetId = selectedOffer.id;
+
+      const alreadyActive = stream.offers.find(
+        (o) => o.offer_id === targetId && o.state === 'active'
+      );
+      if (alreadyActive) {
+        showToast(`Оффер [ID: ${targetId}] уже активен в этом потоке`, 'warning');
+        return;
+      }
+
+      const alreadyArchived = stream.offers.find(
+        (o) => o.offer_id === targetId && o.state === 'removed'
+      );
+      if (alreadyArchived) {
+        await bringBackOffer(stream, targetId);
+      } else {
+        await addOffer(stream, targetId);
+      }
+
+      searchInput.value = '';
+      selectedOffer = null;
+      addBtn.disabled = true;
+      dropdown.classList.add('hidden');
+    });
+
+    addCombobox.appendChild(inputWrapper);
+    addCombobox.appendChild(addBtn);
 
     // Summary stats
     const stats = document.createElement('div');
@@ -337,24 +563,63 @@ document.addEventListener('DOMContentLoaded', () => {
         Итого: ${totalActiveShare}%
       </span>`;
 
-    footer.appendChild(addInline);
+    footer.appendChild(addCombobox);
     footer.appendChild(stats);
     card.appendChild(footer);
 
     return card;
   }
 
+  function renderEditorOfferDropdown(offers, dropdown, searchInput, addBtn, onSelect) {
+    if (!offers || offers.length === 0) {
+      dropdown.innerHTML = '<div class="dropdown-item">Ничего не найдено</div>';
+      dropdown.classList.remove('hidden');
+      return;
+    }
+
+    dropdown.innerHTML = offers
+      .map(
+        (o) =>
+          `<div class="dropdown-item" data-id="${o.id}" data-name="${escapeHtml(o.name)}">[ID: ${o.id}] ${escapeHtml(o.name)}</div>`
+      )
+      .join('');
+    dropdown.classList.remove('hidden');
+
+    dropdown.querySelectorAll('.dropdown-item[data-id]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = parseInt(el.getAttribute('data-id'), 10);
+        const name = el.getAttribute('data-name');
+        if (id) {
+          const chosen = { id, name };
+          onSelect(chosen);
+          searchInput.value = `[ID: ${id}] ${name}`;
+          addBtn.disabled = false;
+          dropdown.classList.add('hidden');
+        }
+      });
+    });
+  }
+
   function getStatusText(status, isManaged) {
-    if (!isManaged) return 'Opaque / Redirect';
+    if (!isManaged) return 'Нет редактируемых офферов';
+    const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
     switch (status) {
-      case 'clean': return 'Синхронизирован с KT';
-      case 'dirty': return 'Unpublished changes';
-      case 'publishing': return 'Публикация в KT...';
-      case 'verifying': return 'Верификация...';
-      case 'conflict': return 'Конфликт с KT';
-      case 'unknown': return 'Проверка результата...';
-      case 'remote_missing': return 'Удалён в KT';
-      default: return status;
+      case 'clean':
+        return isDemo ? 'Синхронизирован с демо' : 'Синхронизирован с KT';
+      case 'dirty':
+        return 'Неопубликованные изменения';
+      case 'publishing':
+        return 'Публикация...';
+      case 'verifying':
+        return 'Верификация...';
+      case 'conflict':
+        return 'Конфликт с трекером';
+      case 'unknown':
+        return 'Состояние неизвестно';
+      case 'remote_missing':
+        return 'Удален в трекере';
+      default:
+        return status;
     }
   }
 
@@ -439,7 +704,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const updatedStream = await res.json();
       if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка отмены изменений');
       updateStreamInView(updatedStream);
-      showToast('Черновик сброшен до последнего подтверждённого состояния KT', 'info');
+      showToast('Черновик сброшен до исходного состояния Baseline', 'info');
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -454,12 +719,12 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({ expected_revision: stream.revision }),
       });
       const updatedStream = await res.json();
-      if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка публикации потока в KT');
+      if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка публикации потока');
       updateStreamInView(updatedStream);
       const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
       const successMsg = isDemo
         ? `Поток успешно опубликован в демо-трекер (Flow ID: ${updatedStream.id}) и подтверждён read-back!`
-        : 'Поток успешно опубликован в Keitaro и подтверждён!';
+        : 'Поток успешно опубликован в Keitaro и подтверждён read-back!';
       showToast(successMsg, 'success');
     } catch (err) {
       showToast(err.message, 'error');
@@ -470,6 +735,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateStreamInView(updatedStream) {
+    if (currentCampaignData && currentCampaignData.streams) {
+      const idx = currentCampaignData.streams.findIndex((s) => s.id === updatedStream.id);
+      if (idx !== -1) {
+        currentCampaignData.streams[idx] = updatedStream;
+      }
+    }
     const oldCard = document.getElementById(`stream-card-${updatedStream.id}`);
     if (oldCard) {
       const newCard = createStreamCard(updatedStream);
@@ -479,7 +750,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function escapeHtml(text) {
     const div = document.createElement('div');
-    div.textContent = text;
+    div.textContent = text || '';
     return div.innerHTML;
   }
 
@@ -487,6 +758,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const demoResetBtn = document.getElementById('demoResetBtn');
   if (demoResetBtn) {
     demoResetBtn.addEventListener('click', async () => {
+      const ok = confirm(
+        'Сбросить демо-кампании, локальную БД и симулятор к исходному состоянию? Все несохраненные черновики будут удалены.'
+      );
+      if (!ok) return;
+
       try {
         demoResetBtn.disabled = true;
         const res = await fetch('/api/demo/reset', { method: 'POST' });
@@ -494,11 +770,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!res.ok) throw new Error(data.detail || 'Ошибка сброса демо');
         showToast('Демо-состояние успешно сброшено к исходному seed (34/33/33)!', 'success');
         clearNotice();
-        if (currentCampaignId) {
-          fetchStreams(currentCampaignId);
-        } else {
-          loadCampaigns();
-        }
+        await loadCampaigns();
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
@@ -510,18 +782,48 @@ document.addEventListener('DOMContentLoaded', () => {
   const demoSimulateDeleteBtn = document.getElementById('demoSimulateDeleteBtn');
   if (demoSimulateDeleteBtn) {
     demoSimulateDeleteBtn.addEventListener('click', async () => {
+      if (!currentCampaignData || !currentCampaignData.streams) {
+        showToast('Сначала выберите кампанию с управляемым потоком', 'warning');
+        return;
+      }
+
+      const managedStream = currentCampaignData.streams.find((s) => s.is_managed);
+      if (!managedStream) {
+        showToast('В текущей кампании нет управляемого потока', 'warning');
+        return;
+      }
+
+      // Check for offer 105 or last active offer in this stream
+      const activeOffers = managedStream.offers.filter((o) => o.state === 'active');
+      if (activeOffers.length === 0) {
+        showToast('В управляемом потоке нет активных офферов для удаления', 'warning');
+        return;
+      }
+
+      const offer105 = activeOffers.find((o) => o.offer_id === 105);
+      const targetOffer = offer105 || activeOffers[activeOffers.length - 1];
+
       try {
         demoSimulateDeleteBtn.disabled = true;
-        // Step 8: Remove offer 105 (or 103) from stream 11 in simulator
         const res = await fetch('/api/demo/simulate-delete-stream-offer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stream_id: 11, offer_id: 105 }),
+          body: JSON.stringify({
+            stream_id: managedStream.remote_stream_id,
+            offer_id: targetOffer.offer_id,
+          }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Ошибка симуляции удаления');
-        showToast('Оффер #5 удален из потока симулятора! Нажмите Fetch Streams для проверки синхронизации.', 'info');
-        showNotice('Внимание: В симуляторе из потока удален оффер #5. Нажмите «Fetch Streams», чтобы зафиксировать внешнее изменение.', 'warning');
+
+        showToast(
+          `Привязка оффера ID ${targetOffer.offer_id} удалена из потока в симуляторе!`,
+          'info'
+        );
+        showNotice(
+          `Внимание: В симуляторе из потока Flow 2 удалена привязка оффера ID ${targetOffer.offer_id}. Нажмите «Fetch Streams», чтобы зафиксировать внешнее изменение.`,
+          'warning'
+        );
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
@@ -531,19 +833,31 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   const demoSimulateDisableBtn = document.getElementById('demoSimulateDisableBtn');
+  let offer105Disabled = false;
   if (demoSimulateDisableBtn) {
     demoSimulateDisableBtn.addEventListener('click', async () => {
       try {
         demoSimulateDisableBtn.disabled = true;
-        // Step 9: Disable offer 105 in global catalog
+        const targetAvailable = offer105Disabled; // toggle
         const res = await fetch('/api/demo/simulate-disable-global-offer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ offer_id: 105, available: false }),
+          body: JSON.stringify({ offer_id: 105, available: targetAvailable }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Ошибка отключения оффера');
-        showToast('Оффер #5 скрыт в глобальном каталоге симулятора. Теперь при попытке Bring back будет показано объяснение!', 'info');
+        if (!res.ok) throw new Error(data.detail || 'Ошибка изменения статуса оффера');
+
+        offer105Disabled = !targetAvailable;
+        if (offer105Disabled) {
+          demoSimulateDisableBtn.textContent = '✅ Восстановить оффер ID 105 в каталоге';
+          showToast(
+            'Оффер ID 105 скрыт в глобальном каталоге симулятора. Теперь при попытке Bring back будет показано объяснение!',
+            'info'
+          );
+        } else {
+          demoSimulateDisableBtn.textContent = '🚫 Скрыть оффер ID 105 в каталоге';
+          showToast('Оффер ID 105 снова доступен в каталоге симулятора.', 'success');
+        }
       } catch (err) {
         showToast(err.message, 'error');
       } finally {

@@ -593,17 +593,21 @@ document.addEventListener('DOMContentLoaded', () => {
       selectedOffersContainer.appendChild(tag);
     });
 
+    const flow2ArrowLabel = document.getElementById('flow2ArrowLabel');
     if (selectedOffers.length > 0) {
       selectedOfferIdInput.value = selectedOffers.map((o) => o.id).join(',');
       document.getElementById('offerError').classList.remove('visible');
 
       if (selectedOffers.length === 1) {
+        if (flow2ArrowLabel) flow2ArrowLabel.innerHTML = '&darr; Оффер · 100%';
         previewOfferText.textContent = `[ID: ${selectedOffers[0].id}] ${selectedOffers[0].name} (100%)`;
       } else {
+        if (flow2ArrowLabel) flow2ArrowLabel.innerHTML = '&darr; Офферы · суммарно 100%';
         const parts = selectedOffers.map((o, idx) => `[ID: ${o.id}] ${o.name} (${shares[idx]}%)`);
         previewOfferText.textContent = parts.join(', ');
       }
     } else {
+      if (flow2ArrowLabel) flow2ArrowLabel.innerHTML = '&darr; Оффер · 100%';
       selectedOfferIdInput.value = '';
       previewOfferText.textContent = 'Оффер не выбран';
     }
@@ -755,11 +759,19 @@ document.addEventListener('DOMContentLoaded', () => {
       resultCampaignName.textContent = data.name;
       resultTrackingUrl.value = data.tracking_url || 'Не сформирован';
       resultFlowIds.textContent = `Flow 1: ${data.flow1_stream_id || '-'}, Flow 2: ${data.flow2_stream_id || '-'}`;
+      const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
       resultVerificationStatus.textContent =
-        data.verification_status === 'verified' ? 'Подтверждено KT' : data.verification_status;
+        data.verification_status === 'verified'
+          ? (isDemo ? 'Подтверждено в демо' : 'Подтверждено KT')
+          : data.verification_status;
       goToEditorLink.href = `/editor?campaign_id=${data.remote_campaign_id}`;
 
-      showToast('Кампания успешно создана и верифицирована в Keitaro!', 'success');
+      showToast(
+        isDemo
+          ? 'Кампания успешно создана и верифицирована в демо-симуляторе!'
+          : 'Кампания успешно создана и верифицирована в Keitaro!',
+        'success'
+      );
     } catch (err) {
       showToast(err.message, 'error');
     } finally {

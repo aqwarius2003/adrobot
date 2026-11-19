@@ -14,7 +14,8 @@ from src.main import create_app
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setattr("src.core.config.settings.KT_MODE", "demo")
     app = create_app()
     return TestClient(app)
 

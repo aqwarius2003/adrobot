@@ -233,7 +233,11 @@ class StreamEditorService:
         return self.get_campaign_detail(campaign.id)
 
     def get_campaign_detail(self, campaign_id: int) -> CampaignDetailDTO:
-        campaign = self.db.query(Campaign).filter_by(id=campaign_id).first()
+        campaign = (
+            self.db.query(Campaign)
+            .filter((Campaign.remote_campaign_id == campaign_id) | (Campaign.id == campaign_id))
+            .first()
+        )
         if not campaign:
             raise EditorValidationError("Campaign not found")
 

@@ -14,11 +14,15 @@ templates = Jinja2Templates(directory=templates_dir)
 
 @router.get("/")
 def index():
+    if not settings.is_demo_mode:
+        return RedirectResponse(url="/editor")
     return RedirectResponse(url="/creator")
 
 
 @router.get("/creator")
 def creator_page(request: Request):
+    if not settings.is_demo_mode:
+        return RedirectResponse(url="/editor?notice=creator_unavailable_in_real_mode")
     return templates.TemplateResponse(
         request=request,
         name="creator.html",
@@ -29,6 +33,9 @@ def creator_page(request: Request):
             "keitaro_configured": settings.is_keitaro_configured,
             "kt_mode": settings.KT_MODE,
             "is_demo": settings.is_demo_mode,
+            "demo_app_url": settings.DEMO_APP_URL,
+            "real_app_url": settings.REAL_APP_URL,
+            "keitaro_base_url": settings.KEITARO_BASE_URL,
         },
     )
 
@@ -45,5 +52,8 @@ def editor_page(request: Request):
             "keitaro_configured": settings.is_keitaro_configured,
             "kt_mode": settings.KT_MODE,
             "is_demo": settings.is_demo_mode,
+            "demo_app_url": settings.DEMO_APP_URL,
+            "real_app_url": settings.REAL_APP_URL,
+            "keitaro_base_url": settings.KEITARO_BASE_URL,
         },
     )

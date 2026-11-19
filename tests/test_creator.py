@@ -111,13 +111,29 @@ def setup_test_db():
 
 
 @pytest.fixture
-def client(mock_kt):
+def client(mock_kt, monkeypatch):
+    monkeypatch.setattr(settings, "KT_MODE", "demo")
     app = create_app()
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_keitaro_client] = lambda: mock_kt
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+def test_creator_rejected_in_real_mode(client: TestClient, monkeypatch):
+    monkeypatch.setattr(settings, "KT_MODE", "real")
+    payload = {
+        "name": "summer_promo",
+        "geo": "AU,RO",
+        "offer_id": 5001,
+        "domain_id": 101,
+        "group_id": "201",
+        "traffic_source_id": 301,
+    }
+    response = client.post("/api/campaigns", json=payload)
+    assert response.status_code == 403
+    assert "creator_unavailable_in_real_mode" in response.json()["detail"]
 
 
 def test_creator_success_creates_two_flows(client: TestClient, mock_kt: MockKeitaroClient):
