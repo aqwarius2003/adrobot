@@ -9,6 +9,7 @@ from src.core.logging import logger
 from src.domain.iso_countries import is_valid_iso_country
 from src.domain.models import Campaign, Offer, Operation, Stream, StreamOffer
 from src.domain.schemas import CampaignCreateRequest, CampaignCreateResponse
+from src.domain.weights import OfferWeightState, calculate_weights
 from src.services.keitaro_client import KeitaroApiError, KeitaroGateway
 
 
@@ -55,11 +56,45 @@ class CampaignCreatorService:
         suffix = uuid.uuid4().hex[:6]
         return f"{slug}-{suffix}"
 
+    @staticmethod
+    def format_source_params(source_params: Any) -> str:
+        """
+        Formats traffic source parameters into a URL query string.
+        Supports:
+        - str: "utm_source=fb&sub1={subid}"
+        - dict: {"source": {"name": "utm_source", "placeholder": "{network}"}, ...}
+        - dict: {"utm_source": "fb", "sub1": "{subid}"}
+        - None or empty
+        """
+        if not source_params:
+            return ""
+        if isinstance(source_params, str):
+            return source_params.strip().lstrip("?").strip()
+        if isinstance(source_params, dict):
+            parts: list[str] = []
+            for key, val in source_params.items():
+                if isinstance(val, dict):
+                    name = str(val.get("name") or key).strip()
+                    placeholder = str(val.get("placeholder") or val.get("value") or "").strip()
+                    if name and placeholder:
+                        parts.append(f"{name}={placeholder}")
+                    elif name:
+                        parts.append(name)
+                elif val is not None:
+                    name = str(key).strip()
+                    placeholder = str(val).strip()
+                    if name and placeholder:
+                        parts.append(f"{name}={placeholder}")
+                    elif name:
+                        parts.append(name)
+            return "&".join(parts)
+        return ""
+
     def build_tracking_url(
         self,
         domain_url: str | None,
         alias: str,
-        source_params: str | None = None,
+        source_params: Any = None,
     ) -> str:
         if domain_url:
             clean_domain = domain_url.strip().rstrip("/")
@@ -69,10 +104,13 @@ class CampaignCreatorService:
         else:
             base = f"{settings.normalized_base_url}/{alias}"
 
-        if source_params:
-            clean_params = source_params.strip().lstrip("?").strip()
+        try:
+            clean_params = self.format_source_params(source_params)
             if clean_params:
                 base = f"{base}?{clean_params}"
+        except Exception as exc:
+            logger.warning("Failed to format source params %r: %s", source_params, exc)
+
         return base
 
     async def create_campaign(self, request: CampaignCreateRequest) -> CampaignCreateResponse:
@@ -84,14 +122,28 @@ class CampaignCreatorService:
             # Check payload-key mismatch (F7)
             if op.candidate_payload:
                 req_dict = request.model_dump()
-                for key in ("name", "geo", "offer_id"):
+                for key in ("name", "geo"):
                     if op.candidate_payload.get(key) != req_dict.get(key):
                         raise ValueError(
                             f"Idempotency key '{idempotency_key}' reused with different payload"
                         )
+                op_offers = op.candidate_payload.get("offer_ids") or (
+                    [op.candidate_payload.get("offer_id")]
+                    if op.candidate_payload.get("offer_id")
+                    else []
+                )
+                if op_offers != request.offer_ids:
+                    raise ValueError(
+                        f"Idempotency key '{idempotency_key}' reused with different payload"
+                    )
 
             if op.status == "success" and op.remote_ids:
                 remote_ids = op.remote_ids
+                summary = (
+                    op.candidate_payload.get("routing_summary")
+                    if op.candidate_payload
+                    else f"Flow 1: {request.geo} -> Google; Flow 2: rest -> Offers {request.offer_ids}"
+                )
                 return CampaignCreateResponse(
                     id=op.target_id or 0,
                     remote_campaign_id=remote_ids.get("campaign_id", 0),
@@ -100,7 +152,8 @@ class CampaignCreatorService:
                     tracking_url=remote_ids.get("tracking_url"),
                     flow1_stream_id=remote_ids.get("flow1_id"),
                     flow2_stream_id=remote_ids.get("flow2_id"),
-                    routing_summary=f"Flow 1: {request.geo} -> Google; Flow 2: rest -> Offer {request.offer_id} (100%)",
+                    routing_summary=summary
+                    or f"Flow 1: {request.geo} -> Google; Flow 2: rest -> Offers",
                     verification_status="verified",
                 )
 
@@ -128,20 +181,35 @@ class CampaignCreatorService:
 
         remote_ids: dict[str, Any] = dict(op.remote_ids or {})
 
-        # Step 1: Validate selected offer in Keitaro
-        op.stage = "verifying_offer"
+        # Step 1: Validate selected offers in Keitaro & calculate initial weights
+        op.stage = "verifying_offers"
         self.db.commit()
 
-        try:
-            offer_data = await self.kt_client.get_offer(request.offer_id)
-            offer_name = offer_data.get("name", f"Offer #{request.offer_id}")
-        except Exception as exc:
-            op.status = "failed"
-            op.error_message = f"Offer {request.offer_id} validation failed: {exc}"
-            self.db.commit()
-            raise ValueError(
-                f"Offer {request.offer_id} not found or unavailable in Keitaro: {exc}"
-            ) from exc
+        selected_offers_data: list[tuple[int, str]] = []
+        for oid in request.offer_ids:
+            try:
+                offer_data = await self.kt_client.get_offer(oid)
+                off_name = offer_data.get("name", f"Offer #{oid}")
+                selected_offers_data.append((oid, off_name))
+            except Exception as exc:
+                op.status = "failed"
+                op.error_message = f"Offer {oid} validation failed: {exc}"
+                self.db.commit()
+                raise ValueError(f"Offer {oid} not found or unavailable in Keitaro: {exc}") from exc
+
+        # Calculate initial deterministic integer weights summing to 100%
+        weight_states = [
+            OfferWeightState(
+                offer_id=oid,
+                position=idx + 1,
+                share=0,
+                is_active=True,
+                is_pinned=False,
+            )
+            for idx, (oid, _) in enumerate(selected_offers_data)
+        ]
+        calculated_states = calculate_weights(weight_states)
+        offer_shares = {cs.offer_id: cs.share for cs in calculated_states}
 
         # Step 2: Determine domain, group, traffic_source & parameters (F8)
         domain_id = request.domain_id or settings.DEFAULT_DOMAIN_ID
@@ -262,7 +330,7 @@ class CampaignCreatorService:
                 self.db.commit()
                 raise KeitaroApiError(f"Failed to create Flow 1: {exc}") from exc
 
-        # Step 5: Create Flow 2 (Default -> Offer 100%)
+        # Step 5: Create Flow 2 (Default -> Offers)
         flow2_id = remote_ids.get("flow2_id")
         flow2_payload = {
             "campaign_id": remote_campaign_id,
@@ -277,10 +345,11 @@ class CampaignCreatorService:
             "landings": [],
             "offers": [
                 {
-                    "offer_id": request.offer_id,
-                    "share": 100,
+                    "offer_id": oid,
+                    "share": offer_shares[oid],
                     "state": "active",
                 }
+                for oid, _ in selected_offers_data
             ],
         }
 
@@ -327,15 +396,16 @@ class CampaignCreatorService:
             rb_flow1.get("type") == "regular"
             and rb_flow1.get("action_payload") == "https://google.com/"
         )
-        # Verify Flow 2 settings: default fallback, offer 100%
+        # Verify Flow 2 settings: default fallback, all requested offers with exact calculated shares summing to 100%
         flow2_offers = rb_flow2.get("offers") or []
-        target_offer = next(
-            (o for o in flow2_offers if o.get("offer_id") == request.offer_id), None
-        )
+        active_rb_offers = [o for o in flow2_offers if o.get("state", "active") == "active"]
+        rb_offer_shares = {o.get("offer_id"): o.get("share") for o in active_rb_offers}
+
         flow2_valid = (
             rb_flow2.get("type") == "default"
-            and target_offer is not None
-            and target_offer.get("share") == 100
+            and len(active_rb_offers) == len(request.offer_ids)
+            and all(rb_offer_shares.get(oid) == offer_shares[oid] for oid in request.offer_ids)
+            and sum(rb_offer_shares.values()) == 100
         )
 
         if not flow1_valid or not flow2_valid:
@@ -364,16 +434,6 @@ class CampaignCreatorService:
                 traffic_source_id=traffic_source_id,
             )
             self.db.add(local_campaign)
-            self.db.flush()
-
-        local_offer = self.db.query(Offer).filter_by(remote_offer_id=request.offer_id).first()
-        if not local_offer:
-            local_offer = Offer(
-                remote_offer_id=request.offer_id,
-                name=offer_name,
-                is_available=True,
-            )
-            self.db.add(local_offer)
             self.db.flush()
 
         # Local Stream 1
@@ -420,32 +480,59 @@ class CampaignCreatorService:
             self.db.add(s2)
             self.db.flush()
 
-        so = self.db.query(StreamOffer).filter_by(stream_id=s2.id, offer_id=local_offer.id).first()
-        if not so:
-            so = StreamOffer(
-                stream_id=s2.id,
-                offer_id=local_offer.id,
-                position=1,
-                baseline_share=100,
-                baseline_state="active",
-                baseline_pinned=False,
-                draft_share=100,
-                draft_state="active",
-                draft_pinned=False,
-                has_been_published=True,
+        for idx, (oid, off_name) in enumerate(selected_offers_data):
+            local_offer = self.db.query(Offer).filter_by(remote_offer_id=oid).first()
+            if not local_offer:
+                local_offer = Offer(
+                    remote_offer_id=oid,
+                    name=off_name,
+                    is_available=True,
+                )
+                self.db.add(local_offer)
+                self.db.flush()
+
+            so = (
+                self.db.query(StreamOffer)
+                .filter_by(stream_id=s2.id, offer_id=local_offer.id)
+                .first()
             )
-            self.db.add(so)
+            if not so:
+                so = StreamOffer(
+                    stream_id=s2.id,
+                    offer_id=local_offer.id,
+                    position=idx + 1,
+                    baseline_share=offer_shares[oid],
+                    baseline_state="active",
+                    baseline_pinned=False,
+                    draft_share=offer_shares[oid],
+                    draft_state="active",
+                    draft_pinned=False,
+                    has_been_published=True,
+                )
+                self.db.add(so)
 
         # Update Operation
         op.stage = "completed"
         op.status = "success"
         op.target_id = local_campaign.id
-        self.db.commit()
 
+        if len(selected_offers_data) == 1:
+            offers_summary = (
+                f"{selected_offers_data[0][1]} [ID: {selected_offers_data[0][0]}] (100%)"
+            )
+        else:
+            offers_summary = ", ".join(
+                f"{name} [ID: {oid}] ({offer_shares[oid]}%)" for oid, name in selected_offers_data
+            )
         routing_summary = (
             f"Flow 1 ({flow1_id}): {', '.join(geo_codes)} -> https://google.com/; "
-            f"Flow 2 ({flow2_id}): остальные -> {offer_name} [ID: {request.offer_id}] (100%)"
+            f"Flow 2 ({flow2_id}): остальные -> {offers_summary}"
         )
+        if op.candidate_payload:
+            cand = dict(op.candidate_payload)
+            cand["routing_summary"] = routing_summary
+            op.candidate_payload = cand
+        self.db.commit()
 
         return CampaignCreateResponse(
             id=local_campaign.id,

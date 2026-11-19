@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ==================== Options & Lookup Schemas ====================
 
@@ -36,11 +36,27 @@ class OfferSearchItem(BaseModel):
 class CampaignCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="Campaign name (without or with prefix)")
     geo: str = Field(..., min_length=2, description="Country code(s), e.g. 'AU' or 'MX,AU,RO'")
-    offer_id: int = Field(..., gt=0, description="Selected existing offer ID")
+    offer_id: int | None = Field(
+        default=None, description="Primary or single selected existing offer ID"
+    )
+    offer_ids: list[int] = Field(
+        default_factory=list, description="Selected existing offer IDs (1 or more)"
+    )
     domain_id: int | None = None
     group_id: str | int | None = None
     traffic_source_id: int | None = None
     idempotency_key: str | None = None
+
+    @model_validator(mode="after")
+    def validate_offers(self) -> "CampaignCreateRequest":
+        ids = list(self.offer_ids)
+        if self.offer_id and self.offer_id not in ids:
+            ids.insert(0, self.offer_id)
+        if not ids:
+            raise ValueError("At least one target offer must be selected")
+        self.offer_ids = ids
+        self.offer_id = ids[0]
+        return self
 
 
 class CampaignCreateResponse(BaseModel):

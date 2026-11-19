@@ -180,3 +180,56 @@ def test_creator_validation_missing_offer(client: TestClient):
     response = client.post("/api/campaigns", json=payload)
     assert response.status_code == 422
     assert "not found or unavailable" in response.json()["detail"]
+
+
+def test_creator_multi_offers_success(client: TestClient, mock_kt: MockKeitaroClient):
+    payload = {
+        "name": "split_test_campaign",
+        "geo": "AU",
+        "offer_ids": [5001, 5002],
+        "domain_id": 101,
+        "group_id": "201",
+    }
+
+    response = client.post("/api/campaigns", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+
+    assert data["verification_status"] == "verified"
+    assert "Flow 2" in data["routing_summary"]
+
+    flow2 = next(s for s in mock_kt.created_stream_calls if s["name"] == "Flow 2")
+    assert len(flow2["offers"]) == 2
+    assert flow2["offers"][0]["offer_id"] == 5001
+    assert flow2["offers"][0]["share"] == 50
+    assert flow2["offers"][1]["offer_id"] == 5002
+    assert flow2["offers"][1]["share"] == 50
+    assert sum(o["share"] for o in flow2["offers"]) == 100
+
+
+def test_creator_traffic_source_dict_parameters(client: TestClient, mock_kt: MockKeitaroClient):
+    mock_kt.sources = [
+        {
+            "id": 302,
+            "name": "Google Ads Advanced",
+            "parameters": {
+                "source": {"name": "utm_source", "placeholder": "{network}"},
+                "campaign": {"name": "utm_campaign", "placeholder": "{campaignid}"},
+            },
+        }
+    ]
+
+    payload = {
+        "name": "dict_params_camp",
+        "geo": "AU",
+        "offer_id": 5001,
+        "domain_id": 101,
+        "traffic_source_id": 302,
+    }
+
+    response = client.post("/api/campaigns", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+
+    assert "utm_source={network}" in data["tracking_url"]
+    assert "utm_campaign={campaignid}" in data["tracking_url"]

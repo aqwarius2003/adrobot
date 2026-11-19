@@ -437,6 +437,53 @@ body.app-body {
   margin-top: 6px;
 }
 
+.selected-offers-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.selected-offer-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background-color: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.selected-offer-share {
+  background-color: #d1fae5;
+  color: #047857;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.btn-offer-remove {
+  background: none;
+  border: none;
+  color: #065f46;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 2px;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.btn-offer-remove:hover {
+  opacity: 1;
+  color: #b91c1c;
+}
+
 .btn-clear {
   background: none;
   border: none;

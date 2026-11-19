@@ -20,9 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const offerSearchInput = document.getElementById('offerSearchInput');
   const selectedOfferIdInput = document.getElementById('selectedOfferId');
   const offerDropdown = document.getElementById('offerDropdown');
-  const selectedOfferBadge = document.getElementById('selectedOfferBadge');
-  const selectedOfferText = document.getElementById('selectedOfferText');
-  const clearOfferBtn = document.getElementById('clearOfferBtn');
+  const selectedOffersContainer = document.getElementById('selectedOffersContainer');
 
   // Settings selects
   const domainSelect = document.getElementById('domainSelect');
@@ -554,9 +552,81 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================================
-  // Offer Combobox Search
+  // Offer Combobox Search & Multi-Select
   // =========================================================================
+  let selectedOffers = []; // Array of { id: number, name: string }
   let offerDebounceTimeout = null;
+
+  function calculateOfferShares(count) {
+    if (count <= 0) return [];
+    if (count === 1) return [100];
+    const q = Math.floor(100 / count);
+    const r = 100 % count;
+    const shares = [];
+    for (let i = 0; i < count; i++) {
+      shares.push(q + (i < r ? 1 : 0));
+    }
+    return shares;
+  }
+
+  function renderSelectedOffers() {
+    if (!selectedOffersContainer) return;
+    selectedOffersContainer.innerHTML = '';
+    const shares = calculateOfferShares(selectedOffers.length);
+
+    selectedOffers.forEach((off, idx) => {
+      const share = shares[idx];
+      const tag = document.createElement('div');
+      tag.className = 'selected-offer-tag';
+      tag.innerHTML = `
+        <span class="selected-offer-title">[ID: ${off.id}] ${escapeHtml(off.name)}</span>
+        <span class="selected-offer-share">${share}%</span>
+        <button type="button" class="btn-offer-remove" data-id="${off.id}" aria-label="Удалить оффер">&times;</button>
+      `;
+
+      tag.querySelector('.btn-offer-remove').addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        removeOffer(off.id);
+      });
+
+      selectedOffersContainer.appendChild(tag);
+    });
+
+    if (selectedOffers.length > 0) {
+      selectedOfferIdInput.value = selectedOffers.map((o) => o.id).join(',');
+      document.getElementById('offerError').classList.remove('visible');
+
+      if (selectedOffers.length === 1) {
+        previewOfferText.textContent = `[ID: ${selectedOffers[0].id}] ${selectedOffers[0].name} (100%)`;
+      } else {
+        const parts = selectedOffers.map((o, idx) => `[ID: ${o.id}] ${o.name} (${shares[idx]}%)`);
+        previewOfferText.textContent = parts.join(', ');
+      }
+    } else {
+      selectedOfferIdInput.value = '';
+      previewOfferText.textContent = 'Оффер не выбран';
+    }
+  }
+
+  function selectOffer(id, name) {
+    const numId = parseInt(id, 10);
+    if (!numId) return;
+    if (!selectedOffers.some((o) => o.id === numId)) {
+      selectedOffers.push({ id: numId, name: name });
+      renderSelectedOffers();
+    }
+    offerSearchInput.value = '';
+    offerDropdown.classList.add('hidden');
+    offerSearchInput.focus();
+  }
+
+  function removeOffer(id) {
+    const numId = parseInt(id, 10);
+    selectedOffers = selectedOffers.filter((o) => o.id !== numId);
+    renderSelectedOffers();
+  }
+
   offerSearchInput.addEventListener('input', () => {
     clearTimeout(offerDebounceTimeout);
     const query = offerSearchInput.value.trim();
@@ -601,22 +671,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function selectOffer(id, name) {
-    selectedOfferIdInput.value = id;
-    selectedOfferText.textContent = `[ID: ${id}] ${name}`;
-    previewOfferText.textContent = `[ID: ${id}] ${name} (100%)`;
-    selectedOfferBadge.classList.remove('hidden');
-    offerSearchInput.value = '';
-    offerDropdown.classList.add('hidden');
-    document.getElementById('offerError').classList.remove('visible');
-  }
-
-  clearOfferBtn.addEventListener('click', () => {
-    selectedOfferIdInput.value = '';
-    selectedOfferBadge.classList.add('hidden');
-    previewOfferText.textContent = 'Оффер не выбран';
-  });
-
   document.addEventListener('click', (e) => {
     if (!offerSearchInput.contains(e.target) && !offerDropdown.contains(e.target)) {
       offerDropdown.classList.add('hidden');
@@ -657,10 +711,9 @@ document.addEventListener('DOMContentLoaded', () => {
       hasErrors = true;
     }
 
-    const offerId = selectedOfferIdInput.value;
-    if (!offerId) {
+    if (selectedOffers.length === 0) {
       const err = document.getElementById('offerError');
-      err.textContent = 'Выберите оффер из списка';
+      err.textContent = 'Выберите хотя бы один оффер из списка';
       err.classList.add('visible');
       hasErrors = true;
     }
@@ -675,7 +728,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const payload = {
       name: name,
       geo: selectedCodes.join(','),
-      offer_id: parseInt(offerId, 10),
+      offer_ids: selectedOffers.map((o) => o.id),
+      offer_id: selectedOffers[0].id,
       domain_id: domainSelect.value ? parseInt(domainSelect.value, 10) : null,
       group_id: groupSelect.value ? groupSelect.value : null,
       traffic_source_id: sourceSelect.value ? parseInt(sourceSelect.value, 10) : null,
@@ -736,9 +790,9 @@ document.addEventListener('DOMContentLoaded', () => {
     hideGeoDropdown();
     geoError.classList.remove('visible');
 
-    // Reset Offer
-    selectedOfferIdInput.value = '';
-    selectedOfferBadge.classList.add('hidden');
+    // Reset Offers
+    selectedOffers = [];
+    renderSelectedOffers();
     document.getElementById('offerError').classList.remove('visible');
 
     // Reset previews

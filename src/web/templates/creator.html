@@ -60,10 +60,10 @@
         <div class="form-error" id="geoError"></div>
       </div>
 
-      <!-- Offer Selection Combobox -->
+      <!-- Target Offers Selection Combobox (Flow 2) -->
       <div class="form-group">
-        <label for="offerSearchInput" class="form-label">
-          Целевой оффер (Flow 2) <span class="required">*</span>
+        <label for="offerSearchInput" class="form-label" id="offerLabel">
+          Целевые офферы (Flow 2) <span class="required">*</span>
         </label>
         <div class="combobox-wrapper">
           <input 
@@ -72,14 +72,17 @@
             class="form-control" 
             placeholder="Поиск по ID или названию оффера..." 
             autocomplete="off"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded="false"
+            aria-controls="offerDropdown"
+            aria-labelledby="offerLabel"
           >
-          <input type="hidden" id="selectedOfferId" required>
-          <div id="offerDropdown" class="combobox-dropdown hidden"></div>
+          <div id="offerDropdown" class="combobox-dropdown hidden" role="listbox"></div>
         </div>
-        <div class="selected-badge hidden" id="selectedOfferBadge">
-          <span id="selectedOfferText">Оффер не выбран</span>
-          <button type="button" class="btn-clear" id="clearOfferBtn" aria-label="Сбросить оффер">&times;</button>
-        </div>
+        <div class="selected-offers-container" id="selectedOffersContainer"></div>
+        <input type="hidden" id="selectedOfferId" required>
+        <div class="form-help">Можно выбрать один или несколько офферов (веса распределяются автоматически суммой 100%)</div>
         <div class="form-error" id="offerError"></div>
       </div>
 
