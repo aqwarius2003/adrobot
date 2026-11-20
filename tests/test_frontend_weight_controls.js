@@ -7,7 +7,7 @@ function extract(name) {
   return start < 0 ? '' : source.slice(start, source.indexOf('\n  }', start) + 4);
 }
 class Element {
-  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.style = {}; }
+  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.style = {}; this.dataset = {}; }
   appendChild(child) { this.children.push(child); }
   setAttribute(key, value) { this[key] = value; }
   addEventListener(event, handler) { this.listeners[event] = handler; }
