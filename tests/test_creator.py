@@ -125,7 +125,7 @@ def test_creator_accepts_authenticated_real_mode(client: TestClient, monkeypatch
     monkeypatch.setattr(settings, "KT_MODE", "real")
     from src.core.security import generate_csrf_token, get_security_store, hash_token
 
-    token = get_security_store().create_session()
+    token = get_security_store().create_session(key="synthetic-creator-fixture")
     csrf = generate_csrf_token(hash_token(token))
     client.cookies.set("adrobot_session", token)
     payload = {

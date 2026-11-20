@@ -188,7 +188,7 @@ def test_real_mode_creator_restored(client: TestClient, monkeypatch):
     monkeypatch.setattr(settings, "KT_MODE", "real")
     from src.core.security import get_security_store
 
-    token = get_security_store().create_session()
+    token = get_security_store().create_session(key="synthetic-browser-fixture")
     client.cookies.set("adrobot_session", token)
 
     # POST without CSRF remains rejected before any upstream request.

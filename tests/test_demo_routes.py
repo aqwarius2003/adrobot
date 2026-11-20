@@ -1,5 +1,6 @@
 """Tests for Demo Mode API routes and UI badges."""
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -87,7 +88,8 @@ def test_ui_templates_render_demo_badge_in_demo_mode():
         assert res.status_code == 200
         assert "Демо · симулятор" in res.text
         assert "Keitaro — симулятор" in res.text
-        assert "is_demo: true" in res.text
+        config = json.loads(res.text.split('id="appConfigData">', 1)[1].split("</script>", 1)[0])
+        assert config["is_demo"] is True
 
         res_cr = client.get("/demo/creator")
         assert res_cr.status_code == 200
@@ -101,9 +103,10 @@ def test_ui_templates_render_real_status_in_real_mode():
     from src.core.security import get_security_store
 
     store = get_security_store()
-    token = store.create_session("real")
+    token = store.create_session("real", key="synthetic-demo-fixture")
     res = client.get("/real/editor", cookies={"adrobot_session": token})
     assert res.status_code == 200
     assert "Подключение: Keitaro" in res.text
     assert "Keitaro — симулятор" not in res.text
-    assert "is_demo: false" in res.text
+    config = json.loads(res.text.split('id="appConfigData">', 1)[1].split("</script>", 1)[0])
+    assert config["is_demo"] is False

@@ -97,7 +97,11 @@ def test_real_creator_requires_login(creator_client):
 
 
 def test_real_creator_keeps_csrf_and_accepts_authenticated_creation(creator_client, monkeypatch):
-    session = {"token_hash": "synthetic-session-hash"}
+    session = {
+        "token_hash": "synthetic-session-hash",
+        "_api_key": "synthetic-creator-fixture",
+        "_credential_scope": "f" * 64,
+    }
     monkeypatch.setattr("src.web.routes_ui.get_current_session", lambda *a, **k: session)
     monkeypatch.setattr("src.core.security.get_current_session", lambda *a, **k: session)
     calls = []

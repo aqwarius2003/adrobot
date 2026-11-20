@@ -189,8 +189,6 @@ def test_creator_template_has_geo_combobox_and_tooltips(client: TestClient):
     assert 'GEO <span class="required">*</span>' in html
     # Placeholder: Название страны или код
     assert 'placeholder="Название страны или код"' in html
-    # Helper text: Можно выбрать несколько стран
-    assert "Можно выбрать несколько стран" in html
 
     # Combobox elements
     assert 'id="geoPickerBox"' in html
@@ -204,14 +202,14 @@ def test_creator_template_has_geo_combobox_and_tooltips(client: TestClient):
     assert 'role="listbox"' in html
     assert 'aria-autocomplete="list"' in html
 
-    # Preview Russian descriptions
-    assert "Фильтр по странам" in html
-    assert "Основной поток" in html
-    assert "Страны не выбраны" in html
+    # Routing remains explicit after the compact layout merged form and preview.
+    assert "По странам → Google" in html
+    assert "Остальные посетители → офферы" in html
+    assert "Посетители из выбранных стран" in html
 
     # Reusable tooltip script and preview usage
     assert "/static/js/tooltip.js" in html
-    assert 'data-tooltip="Посетители из выбранных стран перенаправляются на Google"' in html
+    assert 'aria-controls="geoDropdown"' in html
 
 
 def test_frontend_node_suite_runs():

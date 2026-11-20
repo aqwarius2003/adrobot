@@ -58,7 +58,7 @@ def test_ui_editor_view_in_kt_button_mode_visibility(monkeypatch):
     client_real = TestClient(app_real)
     from src.core.security import get_security_store
 
-    token = get_security_store().create_session()
+    token = get_security_store().create_session(key="synthetic-ui-fixture")
     client_real.cookies.set("adrobot_session", token)
     resp_real = client_real.get("/real/editor")
     assert resp_real.status_code == 200
@@ -91,7 +91,7 @@ def test_root_redirect_depends_on_mode(monkeypatch):
     client_real = TestClient(app_real)
     from src.core.security import get_security_store
 
-    token = get_security_store().create_session()
+    token = get_security_store().create_session(key="synthetic-ui-fixture")
     client_real.cookies.set("adrobot_session", token)
     response_real = client_real.get("/", follow_redirects=False)
     assert response_real.status_code in (302, 307)
