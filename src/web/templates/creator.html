@@ -157,6 +157,20 @@
         </div>
       </div>
 
+      <div class="creator-flows">
+        <fieldset class="creator-flow-section creator-flow-section-geo">
+          <legend><span class="flow-tag tag-flow1">Flow 1</span> По странам → Google</legend>
+          <div class="creator-route-destination">
+            <span id="resultFlow1Countries"></span>
+            <strong>→ <code id="resultFlow1Redirect"></code></strong>
+          </div>
+        </fieldset>
+        <fieldset class="creator-flow-section creator-flow-section-offers">
+          <legend><span class="flow-tag tag-flow2">Flow 2</span> Остальные посетители → офферы</legend>
+          <div id="resultFlow2Offers" class="creator-offer-preview" role="list" aria-label="Созданные офферы и доли трафика"></div>
+        </fieldset>
+      </div>
+
       <div class="result-actions">
         <a id="goToEditorLink" href="/{{ current_mode }}/editor" class="btn btn-primary">Перейти в Редактор кампании &rarr;</a>
         <button type="button" id="createAnotherBtn" class="btn btn-secondary">Создать ещё одну</button>

@@ -41,6 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const resultCampaignName = document.getElementById('resultCampaignName');
   const resultTrackingUrl = document.getElementById('resultTrackingUrl');
   const resultFlowIds = document.getElementById('resultFlowIds');
+  const resultFlow1Countries = document.getElementById('resultFlow1Countries');
+  const resultFlow1Redirect = document.getElementById('resultFlow1Redirect');
+  const resultFlow2Offers = document.getElementById('resultFlow2Offers');
   const resultVerificationStatus = document.getElementById('resultVerificationStatus');
   const copyUrlBtn = document.getElementById('copyUrlBtn');
   const goToEditorLink = document.getElementById('goToEditorLink');
@@ -656,6 +659,30 @@ document.addEventListener('DOMContentLoaded', () => {
   // =========================================================================
   // Form submission
   // =========================================================================
+  function renderCreatedRouting(data) {
+    resultFlow1Countries.textContent = (data.flow1_countries || []).join(', ');
+    resultFlow1Redirect.textContent = data.flow1_redirect_url || '';
+    resultFlow2Offers.replaceChildren();
+    (data.flow2_offers || []).forEach((offer) => {
+      const row = document.createElement('div');
+      row.className = 'creator-preview-offer';
+      row.setAttribute('role', 'listitem');
+      const details = document.createElement('div');
+      const name = document.createElement('span');
+      name.className = 'creator-preview-offer-name';
+      name.textContent = offer.name;
+      const id = document.createElement('small');
+      id.className = 'creator-preview-offer-id';
+      id.textContent = `ID: ${offer.id}`;
+      details.append(name, id);
+      const share = document.createElement('strong');
+      share.className = 'creator-preview-offer-share';
+      share.textContent = `${offer.share}%`;
+      row.append(details, share);
+      resultFlow2Offers.appendChild(row);
+    });
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -741,6 +768,7 @@ document.addEventListener('DOMContentLoaded', () => {
       resultCampaignName.textContent = data.name;
       resultTrackingUrl.value = data.tracking_url || 'Не сформирован';
       resultFlowIds.textContent = `Flow 1: ${data.flow1_stream_id || '-'}, Flow 2: ${data.flow2_stream_id || '-'}`;
+      renderCreatedRouting(data);
       const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
       resultVerificationStatus.textContent =
         data.verification_status === 'verified'

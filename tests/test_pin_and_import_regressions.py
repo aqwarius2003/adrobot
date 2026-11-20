@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from src.core.database import Base
+from src.domain.models import Stream, StreamOffer
 from src.services.editor_service import StreamEditorService
 from src.services.keitaro_client import KeitaroGateway
 
@@ -97,6 +98,76 @@ async def test_pin_without_share_change_preserves_60_30_10(db_session):
 
     # 4. Local pin action does NOT perform KT PUT
     assert len(mock_kt.put_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_pin_unpin_returning_to_baseline_is_clean_after_reload(db_session):
+    mock_kt = MockKT()
+    for offer, share in zip(mock_kt.streams[1001]["offers"], [34, 33, 33], strict=True):
+        offer["share"] = share
+    editor = StreamEditorService(db_session, mock_kt)
+    stream = (await editor.fetch_campaign_streams(100)).streams[0]
+
+    pinned = await editor.update_offer_weight(stream.id, 201, None, True, stream.revision)
+    assert pinned.sync_status == "dirty"
+    unpinned = await editor.update_offer_weight(stream.id, 201, None, False, pinned.revision)
+    assert [offer.share for offer in unpinned.offers] == [34, 33, 33]
+    assert all(not offer.is_pinned for offer in unpinned.offers)
+    assert unpinned.sync_status == "clean"
+    assert unpinned.revision == pinned.revision + 1
+
+    db_session.expire_all()
+    reloaded = StreamEditorService(db_session, mock_kt).get_campaign_detail(100).streams[0]
+    assert reloaded.sync_status == "clean"
+    # A reverted draft no longer blocks Fetch or requires publishing.
+    assert (await editor.fetch_campaign_streams(100)).streams[0].sync_status == "clean"
+    assert mock_kt.put_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("difference", ["shares", "other_pin", "baseline_pin", "composition"])
+async def test_pin_unpin_keeps_actual_draft_differences_dirty(db_session, difference):
+    mock_kt = MockKT()
+    if difference != "shares":
+        for offer, share in zip(mock_kt.streams[1001]["offers"], [34, 33, 33], strict=True):
+            offer["share"] = share
+    editor = StreamEditorService(db_session, mock_kt)
+    stream = (await editor.fetch_campaign_streams(100)).streams[0]
+
+    if difference in ("other_pin", "baseline_pin"):
+        binding = (
+            db_session.query(StreamOffer)
+            .filter_by(stream_id=stream.id)
+            .order_by(StreamOffer.position)
+            .all()[1]
+        )
+        if difference == "other_pin":
+            binding.draft_pinned = True
+        else:
+            binding.baseline_pinned = True
+        db_session.query(Stream).filter_by(id=stream.id).first().sync_status = "dirty"
+        db_session.commit()
+    elif difference == "composition":
+        stream = await editor.remove_offer(stream.id, 203, stream.revision)
+
+    pinned = await editor.update_offer_weight(stream.id, 201, None, True, stream.revision)
+    unpinned = await editor.update_offer_weight(stream.id, 201, None, False, pinned.revision)
+    assert unpinned.sync_status == "dirty"
+    assert mock_kt.put_calls == []
+
+
+@pytest.mark.asyncio
+async def test_remove_bring_back_returning_to_baseline_is_clean(db_session):
+    mock_kt = MockKT()
+    for offer, share in zip(mock_kt.streams[1001]["offers"], [34, 33, 33], strict=True):
+        offer["share"] = share
+    editor = StreamEditorService(db_session, mock_kt)
+    stream = (await editor.fetch_campaign_streams(100)).streams[0]
+    removed = await editor.remove_offer(stream.id, 203, stream.revision)
+    restored = await editor.bring_back_offer(stream.id, 203, removed.revision)
+    assert [offer.share for offer in restored.offers] == [34, 33, 33]
+    assert restored.sync_status == "clean"
+    assert mock_kt.put_calls == []
 
 
 @pytest.mark.asyncio

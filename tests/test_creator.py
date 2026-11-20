@@ -179,6 +179,46 @@ def test_creator_success_creates_two_flows(client: TestClient, mock_kt: MockKeit
     assert flow2["offers"][0]["share"] == 100
 
 
+@pytest.mark.parametrize(
+    ("offer_ids", "expected_offers"),
+    [
+        ([5001], [{"id": 5001, "name": "Test Offer Alpha", "share": 100}]),
+        (
+            [5002, 5001, 5003],
+            [
+                {"id": 5002, "name": "Test Offer Beta", "share": 34},
+                {"id": 5001, "name": "Test Offer Alpha", "share": 33},
+                {"id": 5003, "name": "Offer <Gamma> & Co", "share": 33},
+            ],
+        ),
+    ],
+)
+def test_creation_result_contains_confirmed_routing(
+    client: TestClient, mock_kt: MockKeitaroClient, offer_ids, expected_offers
+):
+    mock_kt.offers[5003] = {"id": 5003, "name": "Offer <Gamma> & Co"}
+    payload = {
+        "name": "routing_result",
+        "geo": " au,RO,AU ",
+        "offer_ids": offer_ids,
+        "idempotency_key": "routing-result-check",
+    }
+    response = client.post("/api/campaigns", json=payload)
+    assert response.status_code == 201, response.text
+    data = response.json()
+    assert data["flow1_countries"] == ["Австралия", "Румыния"]
+    assert data["flow1_redirect_url"] == "https://google.com/"
+    assert data["flow2_offers"] == expected_offers
+
+    # A repeat returns the creation snapshot, without creating more streams or
+    # replacing confirmed names with later catalog changes.
+    mock_kt.offers[5001]["name"] = "Renamed after creation"
+    repeated = client.post("/api/campaigns", json=payload)
+    assert repeated.status_code == 201, repeated.text
+    assert repeated.json() == data
+    assert len(mock_kt.created_stream_calls) == 2
+
+
 def test_creator_validation_invalid_geo(client: TestClient):
     payload = {
         "name": "summer_promo",

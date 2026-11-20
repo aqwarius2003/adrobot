@@ -59,6 +59,12 @@ class CampaignCreateRequest(BaseModel):
         return self
 
 
+class CreatedOfferDTO(BaseModel):
+    id: int
+    name: str
+    share: int
+
+
 class CampaignCreateResponse(BaseModel):
     id: int
     remote_campaign_id: int
@@ -67,6 +73,9 @@ class CampaignCreateResponse(BaseModel):
     tracking_url: str | None = None
     flow1_stream_id: int | None = None
     flow2_stream_id: int | None = None
+    flow1_countries: list[str] = Field(default_factory=list)
+    flow1_redirect_url: str | None = None
+    flow2_offers: list[CreatedOfferDTO] = Field(default_factory=list)
     routing_summary: str
     verification_status: str
 

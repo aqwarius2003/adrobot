@@ -439,7 +439,7 @@ class StreamEditorService:
 
         self._recalculate_stream_weights(stream)
         stream.revision += 1
-        stream.sync_status = "dirty"
+        self._refresh_draft_status(stream)
         self.db.commit()
 
         return self._build_stream_dto(stream)
@@ -478,7 +478,7 @@ class StreamEditorService:
 
         self._recalculate_stream_weights(stream)
         stream.revision += 1
-        stream.sync_status = "dirty"
+        self._refresh_draft_status(stream)
         self.db.commit()
 
         return self._build_stream_dto(stream)
@@ -530,7 +530,7 @@ class StreamEditorService:
 
         self._recalculate_stream_weights(stream)
         stream.revision += 1
-        stream.sync_status = "dirty"
+        self._refresh_draft_status(stream)
         self.db.commit()
 
         return self._build_stream_dto(stream)
@@ -580,7 +580,7 @@ class StreamEditorService:
             self._recalculate_stream_weights(stream)
 
         stream.revision += 1
-        stream.sync_status = "dirty"
+        self._refresh_draft_status(stream)
         self.db.commit()
 
         return self._build_stream_dto(stream)
@@ -619,6 +619,20 @@ class StreamEditorService:
         self.db.commit()
 
         return self._build_stream_dto(stream)
+
+    def _refresh_draft_status(self, stream: Stream) -> None:
+        # An edit can undo an earlier edit. Compare persisted values rather than
+        # keeping a sticky dirty flag; do not clear unresolved sync failures.
+        if stream.sync_status not in ("clean", "dirty"):
+            return
+        self.db.flush()
+        offers = self.db.query(StreamOffer).filter_by(stream_id=stream.id).all()
+        has_changes = any(
+            (so.draft_state, so.draft_share, so.draft_pinned)
+            != (so.baseline_state, so.baseline_share, so.baseline_pinned)
+            for so in offers
+        )
+        stream.sync_status = "dirty" if has_changes else "clean"
 
     def _recalculate_stream_weights(self, stream: Stream) -> None:
         self.db.flush()

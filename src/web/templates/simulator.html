@@ -9,7 +9,7 @@
   <div class="simulator-info-banner">
     <div class="info-icon">&#9432;</div>
     <div class="info-content">
-      Здесь вы меняете данные симулятора Keitaro. Чтобы загрузить сохранённые изменения в редактор ADROBOT, нажмите <strong>Fetch Streams</strong>.
+      Здесь Вы можете изменить данные симулятора Keitaro.
     </div>
   </div>
 
@@ -26,7 +26,8 @@
       </div>
 
       <div class="campaign-actions-group">
-        <button type="button" id="simGoToAdrobotBtn" class="btn btn-outline-primary" title="Перейти в редактор ADROBOT для этой кампании">
+        <button type="button" id="simGoToAdrobotBtn" class="btn btn-outline-primary"
+          title="Перейти в редактор ADROBOT для этой кампании">
           Перейти в ADROBOT &rarr;
         </button>
       </div>
@@ -85,18 +86,9 @@
     <div class="stream-card-footer">
       <div class="add-offer-combobox">
         <div class="combobox-input-wrapper">
-          <input
-            type="text"
-            id="simOfferSearchInput"
-            class="form-control"
-            placeholder="Поиск оффера по ID или названию..."
-            autocomplete="off"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-expanded="false"
-            aria-controls="simOfferDropdown"
-            aria-haspopup="listbox"
-          >
+          <input type="text" id="simOfferSearchInput" class="form-control"
+            placeholder="Поиск оффера по ID или названию..." autocomplete="off" role="combobox" aria-autocomplete="list"
+            aria-expanded="false" aria-controls="simOfferDropdown" aria-haspopup="listbox">
           <div id="simOfferDropdown" class="dropdown-list hidden" role="listbox"></div>
         </div>
         <button type="button" id="simAddOfferBtn" class="btn btn-secondary" disabled>+ Добавить</button>
@@ -118,7 +110,10 @@
   </div>
 
   <!-- Flow 1 Compact Stub Row below Flow 2 per Task Format -->
-  <div id="simFlow1Stub" class="unmanaged-stream-row hidden"><span class="unmanaged-stream-title" id="simFlow1Title">Stream: Flow 1 (#1)</span><span class="unmanaged-stream-meta"> filter by: None, stream_id: <span id="simFlow1IdText">--</span>, clicks today: <span class="stream-clicks" id="simFlow1ClicksText">—</span></span></div>
+  <div id="simFlow1Stub" class="unmanaged-stream-row hidden"><span class="unmanaged-stream-title"
+      id="simFlow1Title">Stream: Flow 1 (#1)</span><span class="unmanaged-stream-meta"> filter by: None, stream_id:
+      <span id="simFlow1IdText">--</span>, clicks today: <span class="stream-clicks"
+        id="simFlow1ClicksText">—</span></span></div>
 
   <!-- Empty State Placeholder -->
   <div id="simEmptyState" class="empty-state">

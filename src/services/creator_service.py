@@ -11,7 +11,7 @@ from src.domain.campaign_names import (
     campaign_name_key,
     normalize_campaign_name,
 )
-from src.domain.iso_countries import is_valid_iso_country
+from src.domain.iso_countries import COUNTRY_MAP, is_valid_iso_country
 from src.domain.models import Campaign, Offer, Operation, Stream, StreamOffer
 from src.domain.schemas import CampaignCreateRequest, CampaignCreateResponse
 from src.domain.weights import OfferWeightState, calculate_weights
@@ -156,6 +156,7 @@ class CampaignCreatorService:
                     routing_summary=summary
                     or f"Flow 1: {request.geo} -> Google; Flow 2: rest -> Offers",
                     verification_status="verified",
+                    **(op.candidate_payload or {}).get("routing_details", {}),
                 )
 
         normalized_name = self.normalize_campaign_name(request.name)
@@ -578,9 +579,18 @@ class CampaignCreatorService:
             f"Flow 1 ({flow1_id}): {', '.join(geo_codes)} -> https://google.com/; "
             f"Flow 2 ({flow2_id}): остальные -> {offers_summary}"
         )
+        routing_details = {
+            "flow1_countries": [COUNTRY_MAP[code]["name_ru"] for code in geo_codes],
+            "flow1_redirect_url": rb_flow1["action_payload"],
+            "flow2_offers": [
+                {"id": oid, "name": name, "share": rb_offer_shares[oid]}
+                for oid, name in selected_offers_data
+            ],
+        }
         if op.candidate_payload:
             cand = dict(op.candidate_payload)
             cand["routing_summary"] = routing_summary
+            cand["routing_details"] = routing_details
             op.candidate_payload = cand
         self.db.commit()
 
@@ -594,4 +604,5 @@ class CampaignCreatorService:
             flow2_stream_id=flow2_id,
             routing_summary=routing_summary,
             verification_status="verified",
+            **routing_details,
         )
