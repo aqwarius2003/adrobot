@@ -9,13 +9,17 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      - APP_ENV=production
+      - APP_ENV=${APP_ENV:-development}
+      - KT_MODE=${KT_MODE:-real}
+      - APP_SECRET_KEY=${APP_SECRET_KEY:-dev-secret-key-change-in-prod}
       - APP_HOST=0.0.0.0
       - APP_PORT=8000
       - DATABASE_URL=sqlite:////app/data/app.db
       # Runtime secrets provided via local .env file or host environment
       - KEITARO_BASE_URL=${KEITARO_BASE_URL:-https://tracker.example}
-      - KEITARO_API_KEY=${KEITARO_API_KEY:-}
+      - REAL_KEITARO_BASE_URL=${REAL_KEITARO_BASE_URL:-${KEITARO_BASE_URL:-https://tracker.example}}
+      - KEITARO_API_KEY=
+      - REAL_KEITARO_API_KEY=
       - CAMPAIGN_SURNAME=${CAMPAIGN_SURNAME:-rykov}
     volumes:
       - adrobot_data:/app/data
