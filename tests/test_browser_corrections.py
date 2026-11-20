@@ -183,36 +183,42 @@ def test_browser_2_fetch_context_synchronization(client: TestClient):
     assert res_repeat.status_code == 200
 
 
-def test_real_mode_creator_disabled(client: TestClient, monkeypatch):
-    """Section 1: In real mode, creator endpoints and pages are disabled / redirected."""
+def test_real_mode_creator_restored(client: TestClient, monkeypatch):
+    """Part 1 is visible after login; restoring it does not remove CSRF."""
     monkeypatch.setattr(settings, "KT_MODE", "real")
+    from src.core.security import get_security_store
 
-    # POST to creator in real mode is rejected
+    token = get_security_store().create_session()
+    client.cookies.set("adrobot_session", token)
+
+    # POST without CSRF remains rejected before any upstream request.
     res = client.post(
         "/api/campaigns",
         json={"name": "test_promo", "geo": "CA", "offer_ids": [101]},
     )
     assert res.status_code == 403
-    assert "creator_unavailable_in_real_mode" in res.json()["detail"]
+    assert "CSRF" in res.json()["detail"]
 
-    # GET /creator redirects to editor
+    # GET /creator redirects to the restored real creator.
     res_page = client.get("/creator", follow_redirects=False)
     assert res_page.status_code in (302, 307)
-    assert res_page.headers["location"] == "/editor?notice=creator_unavailable_in_real_mode"
+    assert res_page.headers["location"] == "/real/creator"
+    assert client.get("/real/creator").status_code == 200
 
     # GET / redirects to editor in real mode
     res_root = client.get("/", follow_redirects=False)
     assert res_root.status_code in (302, 307)
-    assert res_root.headers["location"] == "/editor"
+    assert res_root.headers["location"] in ("/real/editor", "/editor")
 
 
 def test_simulator_persistence_across_restarts(tmp_path):
     """Section 6: Simulator state survives restarts via persistence file."""
     state_file = str(tmp_path / "sim_state.json")
 
-    # Instance 1: Create storage and mutate
+    # Instance 1: Create storage and mutate (3 synthetic seed campaigns per DEMO_MODE_TASK v3.0 §2)
     sim1 = SimulatorStorage(surname="rykov", state_file=state_file)
-    assert len(sim1.campaigns) == 1
+    initial_count = len(sim1.campaigns)
+    assert initial_count == 3
     new_camp = sim1.create_campaign({"name": "test_rykov_persisted", "alias": "persisted"})
     camp_id = new_camp["id"]
     assert os.path.exists(state_file)
@@ -225,4 +231,4 @@ def test_simulator_persistence_across_restarts(tmp_path):
     # Reset restores seed state
     sim2.reset()
     assert camp_id not in sim2.campaigns
-    assert len(sim2.campaigns) == 1
+    assert len(sim2.campaigns) == initial_count

@@ -5,6 +5,7 @@ from src.api.dependencies import get_db, get_editor_service, get_sync_service
 from src.domain.models import Operation
 from src.domain.schemas import (
     AddOfferRequest,
+    CancelStreamRequest,
     OfferMutationRequest,
     OperationStatusResponse,
     PushRequest,
@@ -19,7 +20,7 @@ from src.services.editor_service import (
 from src.services.keitaro_client import KeitaroApiError
 from src.services.sync_service import StreamSyncService, SyncConflictError, SyncVerificationError
 
-router = APIRouter(prefix="/api", tags=["Streams"])
+router = APIRouter(tags=["Streams"])
 
 
 @router.post("/streams/{id}/offers", response_model=StreamDTO)
@@ -33,6 +34,7 @@ async def add_offer_to_stream(
             stream_id=id,
             offer_id=request.offer_id,
             expected_revision=request.expected_revision,
+            expected_remote_campaign_id=request.expected_remote_campaign_id,
         )
     except EditorConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -54,6 +56,7 @@ async def remove_offer_from_stream(
             stream_id=id,
             offer_id=offer_id,
             expected_revision=request.expected_revision,
+            expected_remote_campaign_id=request.expected_remote_campaign_id,
         )
     except EditorConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -75,6 +78,7 @@ async def bring_back_offer_to_stream(
             stream_id=id,
             offer_id=offer_id,
             expected_revision=request.expected_revision,
+            expected_remote_campaign_id=request.expected_remote_campaign_id,
         )
     except EditorConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -98,6 +102,7 @@ async def update_offer_weight(
             share=request.share,
             is_pinned=request.is_pinned,
             expected_revision=request.expected_revision,
+            expected_remote_campaign_id=request.expected_remote_campaign_id,
         )
     except EditorConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -110,10 +115,15 @@ async def update_offer_weight(
 @router.post("/streams/{id}/cancel", response_model=StreamDTO)
 def cancel_stream_changes(
     id: int,
+    request: CancelStreamRequest | None = None,
     editor_service: StreamEditorService = Depends(get_editor_service),
 ) -> StreamDTO:
     try:
-        return editor_service.cancel_stream(stream_id=id)
+        expected_remote_campaign_id = request.expected_remote_campaign_id if request else None
+        return editor_service.cancel_stream(
+            stream_id=id,
+            expected_remote_campaign_id=expected_remote_campaign_id,
+        )
     except EditorConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except EditorValidationError as exc:
@@ -133,6 +143,7 @@ async def push_stream_to_keitaro(
             stream_id=id,
             expected_revision=request.expected_revision,
             idempotency_key=request.idempotency_key,
+            expected_remote_campaign_id=request.expected_remote_campaign_id,
         )
     except SyncConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -145,6 +156,26 @@ async def push_stream_to_keitaro(
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+
+@router.post("/streams/{id}/reconcile", response_model=StreamDTO)
+async def reconcile_stream_status(
+    id: int,
+    sync_service: StreamSyncService = Depends(get_sync_service),
+) -> StreamDTO:
+    """Safe read-only reconciliation endpoint for unknown or interrupted push operations."""
+    try:
+        return await sync_service.reconcile_stream(stream_id=id)
+    except EditorConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except (EditorValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Reconciliation error: {exc}"
         ) from exc
 
 

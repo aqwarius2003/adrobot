@@ -18,12 +18,12 @@
       </div>
 
       <div class="campaign-actions-group">
-        <button type="button" id="fetchStreamsBtn" class="btn btn-primary" disabled>
+        <button type="button" id="fetchStreamsBtn" class="btn btn-secondary" disabled title="Выберите кампанию из списка для загрузки потоков">
           <span class="btn-spinner hidden" id="fetchSpinner"></span>
           <span class="btn-text">Fetch Streams</span>
         </button>
         {% if not is_demo %}
-        <a id="viewInKtLink" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm hidden" title="Открыть кампанию в административном интерфейсе Keitaro">
+        <a id="viewInKtLink" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-secondary hidden" title="Открыть кампанию в административном интерфейсе Keitaro">
           View in KT &nearr;
         </a>
         {% endif %}
@@ -35,33 +35,6 @@
       </div>
     </div>
   </section>
-
-  {% if is_demo %}
-  <!-- Demo Controls Bar (visible strictly in demo mode, collapsible) -->
-  <section class="card demo-controls-card">
-    <details class="demo-scenarios-details">
-      <summary class="demo-scenarios-summary">
-        <span class="demo-pill">ДЕМО</span>
-        <strong>Сценарии проверки симулятора</strong>
-        <span class="demo-hint">(Управление симулятором Keitaro: моделирование внешних изменений)</span>
-      </summary>
-      <div class="demo-controls-body">
-        <div class="demo-controls-actions">
-          <button type="button" id="demoSimulateDeleteBtn" class="btn btn-outline-secondary btn-sm" data-tooltip="Удалить привязку оффера ID 105 из потока Flow 2 в симуляторе (без удаления из каталога) для проверки реакции Fetch">
-            ✂️ Удалить привязку оффера ID 105 в симуляторе
-          </button>
-          <button type="button" id="demoSimulateDisableBtn" class="btn btn-outline-secondary btn-sm" data-tooltip="Скрыть оффер ID 105 в общем каталоге симулятора для проверки ошибки Bring back">
-            🚫 Скрыть оффер ID 105 в каталоге
-          </button>
-          <button type="button" id="demoResetBtn" class="btn btn-outline-warning btn-sm" data-tooltip="Сбросить симулятор и локальную БД к начальному состоянию (Flow 2: 34/33/33, 5 офферов)">
-            🔄 Сброс демо (Reset)
-          </button>
-        </div>
-        <div id="demoScenarioNotice" class="demo-scenario-notice hidden"></div>
-      </div>
-    </details>
-  </section>
-  {% endif %}
 
   <!-- Notice Banner (for conflict / dirty / warnings) -->
   <div id="editorNotice" class="editor-notice hidden"></div>
@@ -79,5 +52,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/offer_combobox.js"></script>
 <script src="/static/js/editor.js"></script>
 {% endblock %}

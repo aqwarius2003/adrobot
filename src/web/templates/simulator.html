@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Keitaro — симулятор — Campaign Manager{% endblock %}
+{% block page_title %}Keitaro — симулятор{% endblock %}
+
+{% block content %}
+<div class="editor-container simulator-container">
+  <!-- Info banner -->
+  <div class="simulator-info-banner">
+    <div class="info-icon">&#9432;</div>
+    <div class="info-content">
+      Здесь вы меняете данные симулятора Keitaro. Чтобы загрузить сохранённые изменения в редактор ADROBOT, нажмите <strong>Fetch Streams</strong>.
+    </div>
+  </div>
+
+  <!-- Campaign Selector Card (No Stream Selector per Task 3.1 §1) -->
+  <section class="card campaign-select-card">
+    <div class="campaign-select-row">
+      <div class="campaign-input-group">
+        <label for="simCampaignSelect" class="form-label">Демо-кампания:</label>
+        <div class="combobox-wrapper">
+          <select id="simCampaignSelect" class="form-control">
+            <option value="">-- Загрузка кампаний... --</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="campaign-actions-group">
+        <button type="button" id="simGoToAdrobotBtn" class="btn btn-outline-primary" title="Перейти в редактор ADROBOT для этой кампании">
+          Перейти в ADROBOT &rarr;
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Notice Banner for Save / Conflict / Flow 2 status -->
+  <div id="simNotice" class="editor-notice hidden"></div>
+
+  <!-- Loading State Placeholder -->
+  <div id="simLoadingState" class="stream-card sim-loading-card hidden">
+    <div class="loading-state-content">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Загрузка потоков кампании...</div>
+    </div>
+  </div>
+
+  <!-- Main Simulator Editor Card for Flow 2 -->
+  <div id="simEditorCard" class="stream-card hidden">
+    <div class="stream-card-header">
+      <div class="stream-header-info">
+        <div class="stream-title-row">
+          <h3 class="stream-title" id="simCurrentStreamName">Flow 2 (Offers)</h3>
+          <span class="badge badge-unsaved hidden" id="simUnsavedBadge">Есть несохранённые изменения</span>
+        </div>
+        <div class="stream-meta-row">
+          <span class="stream-id-badge" id="simCurrentStreamIdBadge">Stream ID: --</span>
+          <span class="stream-meta-divider">·</span>
+          <span class="stream-summary-text" id="simSummaryStats">
+            <span id="simActiveCount">Активных: 0</span>
+            <span class="stream-meta-dot">·</span>
+            <span id="simTotalShareWrapper">Итого: <strong id="simTotalShare" class="share-valid">100%</strong></span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Offers Table: Uses standard ADROBOT editor classes -->
+    <div class="offers-table-wrapper">
+      <table class="offers-table sim-offers-table" id="simOffersTable">
+        <thead>
+          <tr>
+            <th class="col-offer">Оффер</th>
+            <th class="col-share">Доля трафика</th>
+            <th class="col-status">Статус</th>
+            <th class="col-actions">Действия</th>
+          </tr>
+        </thead>
+        <tbody id="simOffersTbody">
+          <!-- Populated by simulator.js -->
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Card Footer: Add Offer combobox -->
+    <div class="stream-card-footer">
+      <div class="add-offer-combobox">
+        <div class="combobox-input-wrapper">
+          <input
+            type="text"
+            id="simOfferSearchInput"
+            class="form-control"
+            placeholder="Поиск оффера по ID или названию..."
+            autocomplete="off"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded="false"
+            aria-controls="simOfferDropdown"
+            aria-haspopup="listbox"
+          >
+          <div id="simOfferDropdown" class="dropdown-list hidden" role="listbox"></div>
+        </div>
+        <button type="button" id="simAddOfferBtn" class="btn btn-secondary" disabled>+ Добавить</button>
+      </div>
+    </div>
+
+    <!-- Save / Revert Actions Bar -->
+    <div class="simulator-actions-bar">
+      <div class="action-buttons-left">
+        <button type="button" id="simSaveBtn" class="btn btn-primary" disabled>
+          <span class="btn-spinner hidden" id="simSaveSpinner"></span>
+          <span>Сохранить в симуляторе</span>
+        </button>
+        <button type="button" id="simRevertBtn" class="btn btn-secondary" disabled>
+          Отменить изменения
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Flow 1 Compact Stub Row below Flow 2 per Task Format -->
+  <div id="simFlow1Stub" class="unmanaged-stream-row hidden"><span class="unmanaged-stream-title" id="simFlow1Title">Stream: Flow 1 (#1)</span><span class="unmanaged-stream-meta"> filter by: None, stream_id: <span id="simFlow1IdText">--</span>, clicks today: <span class="stream-clicks" id="simFlow1ClicksText">—</span></span></div>
+
+  <!-- Empty State Placeholder -->
+  <div id="simEmptyState" class="empty-state">
+    <div class="empty-icon">&#9881;</div>
+    <h3>Выберите демо-кампанию</h3>
+    <p>Здесь вы сможете добавлять или убирать офферы на стороне симулятора Keitaro.</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/offer_combobox.js"></script>
+<script src="/static/js/simulator.js"></script>
+{% endblock %}

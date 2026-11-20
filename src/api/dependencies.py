@@ -3,23 +3,27 @@ from collections.abc import Generator
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from src.core.database import SessionLocal
+from src.core.connection_context import ConnectionContext, get_connection_context
 from src.services.creator_service import CampaignCreatorService
 from src.services.editor_service import StreamEditorService
 from src.services.keitaro_client import KeitaroClient, KeitaroGateway
 from src.services.sync_service import StreamSyncService
 
 
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
+def get_db(
+    context: ConnectionContext = Depends(get_connection_context),
+) -> Generator[Session, None, None]:
+    db = context.session_factory()
     try:
         yield db
     finally:
         db.close()
 
 
-def get_keitaro_client() -> KeitaroGateway:
-    return KeitaroClient()
+def get_keitaro_client(
+    context: ConnectionContext = Depends(get_connection_context),
+) -> KeitaroGateway:
+    return KeitaroClient(base_url=context.base_url, api_key=context.api_key)
 
 
 def get_creator_service(

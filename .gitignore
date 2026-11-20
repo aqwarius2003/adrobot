@@ -28,6 +28,7 @@ htmlcov/
 *.sqlite3
 data/*
 !data/.gitkeep
+data_backup*
 
 # IDEs
 .idea/

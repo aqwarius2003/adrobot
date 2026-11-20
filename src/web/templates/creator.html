@@ -4,12 +4,10 @@
 {% block page_title %}Создание кампании{% endblock %}
 
 {% block content %}
-<div class="creator-grid">
-  <!-- Left Column: Form -->
-  <section class="card form-card">
+<div class="creator-workspace">
+  <section class="card creator-card" aria-labelledby="creatorHeading">
     <div class="card-header">
-      <h2 class="card-title">Параметры новой кампании</h2>
-      <p class="card-subtitle">Кампания создаётся с обязательным префиксом и двумя маршрутизирующими потоками.</p>
+      <h2 class="card-title" id="creatorHeading">Новая кампания</h2>
     </div>
 
     <form id="creatorForm" class="creator-form" novalidate>
@@ -24,15 +22,31 @@
           class="form-control" 
           placeholder="Например: promo_winter" 
           required 
+          aria-describedby="nameError"
           autocomplete="off"
         >
-        <div class="form-help">
-          Итоговое имя в Keitaro: <strong id="namePreview">test_{{ surname }}_...</strong>
-        </div>
-        <div class="form-error" id="nameError"></div>
+        <div class="form-error" id="nameError" role="alert"></div>
       </div>
 
+      <div class="creator-settings">
+        <div class="form-group">
+          <label for="domainSelect" class="form-label">Домен</label>
+          <select id="domainSelect" class="form-control"><option value="">Загрузка доменов...</option></select>
+        </div>
+        <div class="form-group">
+          <label for="groupSelect" class="form-label">Группа кампаний</label>
+          <select id="groupSelect" class="form-control"><option value="">Загрузка групп...</option></select>
+        </div>
+        <div class="form-group">
+          <label for="sourceSelect" class="form-label">Источник трафика</label>
+          <select id="sourceSelect" class="form-control"><option value="">Загрузка источников...</option></select>
+        </div>
+      </div>
+
+      <div class="creator-flows">
       <!-- GEO Country Picker -->
+      <fieldset class="creator-flow-section creator-flow-section-geo">
+        <legend><span class="flow-tag tag-flow1">Flow 1</span> По странам → Google</legend>
       <div class="form-group">
         <label for="geoSearchInput" class="form-label" id="geoLabel">
           GEO <span class="required">*</span>
@@ -51,19 +65,26 @@
               aria-expanded="false"
               aria-controls="geoDropdown"
               aria-labelledby="geoLabel"
+              aria-describedby="geoError"
             >
           </div>
           <input type="hidden" id="campaignGeo" name="geo" required>
           <div id="geoDropdown" class="geo-dropdown hidden" role="listbox" aria-labelledby="geoLabel"></div>
         </div>
-        <div class="form-help">Можно выбрать несколько стран</div>
-        <div class="form-error" id="geoError"></div>
+        <div class="form-error" id="geoError" role="alert"></div>
       </div>
+      <div class="creator-route-destination">
+        <span>Посетители из выбранных стран</span>
+        <strong>→ <code>https://google.com/</code></strong>
+      </div>
+      </fieldset>
 
       <!-- Target Offers Selection Combobox (Flow 2) -->
+      <fieldset class="creator-flow-section creator-flow-section-offers">
+        <legend><span class="flow-tag tag-flow2">Flow 2</span> Остальные посетители → офферы</legend>
       <div class="form-group">
         <label for="offerSearchInput" class="form-label" id="offerLabel">
-          Целевые офферы (Flow 2) <span class="required">*</span>
+          Офферы <span class="required">*</span>
         </label>
         <div class="combobox-wrapper">
           <input 
@@ -77,101 +98,37 @@
             aria-expanded="false"
             aria-controls="offerDropdown"
             aria-labelledby="offerLabel"
+            aria-describedby="offerError"
           >
           <div id="offerDropdown" class="combobox-dropdown hidden" role="listbox"></div>
         </div>
-        <div class="selected-offers-container" id="selectedOffersContainer"></div>
         <input type="hidden" id="selectedOfferId" required>
-        <div class="form-help">Можно выбрать один или несколько офферов (веса распределяются автоматически суммой 100%)</div>
-        <div class="form-error" id="offerError"></div>
+        <div class="form-error" id="offerError" role="alert"></div>
+        <div id="previewOfferText" class="creator-offer-preview" role="list" aria-label="Офферы и доли трафика">Офферы не выбраны</div>
+        <div id="previewOfferUndo" class="creator-offer-undo hidden" role="status">
+          <span id="previewRemovedOfferText"></span>
+          <button type="button" id="undoPreviewOfferBtn" class="btn btn-secondary btn-sm">Вернуть</button>
+        </div>
+        <div class="creator-offer-summary" id="creatorOfferSummary" role="status" aria-live="polite">Активных: 0 · Итого: 0%</div>
       </div>
-
-      <!-- Optional Target Settings: Domain, Group, Traffic Source -->
-      <div class="settings-group">
-        <div class="group-title">Параметры Keitaro</div>
-        
-        <div class="form-row">
-          <div class="form-group col">
-            <label for="domainSelect" class="form-label">Домен</label>
-            <select id="domainSelect" class="form-control">
-              <option value="">Загрузка доменов...</option>
-            </select>
-          </div>
-
-          <div class="form-group col">
-            <label for="groupSelect" class="form-label">Группа кампаний</label>
-            <select id="groupSelect" class="form-control">
-              <option value="">Загрузка групп...</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label for="sourceSelect" class="form-label">Источник трафика</label>
-          <select id="sourceSelect" class="form-control">
-            <option value="">Загрузка источников...</option>
-          </select>
-        </div>
+      </fieldset>
       </div>
 
       <!-- Submit button -->
-      <div class="form-actions">
+      <div class="creator-actions">
+        <span class="creator-action-hint">{% if is_demo %}Создание в симуляторе Keitaro{% else %}Создание в Keitaro{% endif %}</span>
         <button type="submit" id="submitCreateBtn" class="btn btn-primary">
           <span class="btn-spinner hidden" id="submitSpinner"></span>
           <span class="btn-text" id="submitBtnText">Создать кампанию</span>
         </button>
       </div>
     </form>
-  </section>
-
-  <!-- Right Column: Routing Preview & Result -->
-  <section class="card preview-card">
-    <div class="card-header">
-      <h2 class="card-title">Маршрутизация</h2>
-      <span class="badge badge-preview" id="previewBadge">Предпросмотр</span>
-    </div>
-
-    <!-- Live Preview Box -->
-    <div class="routing-preview-box" id="routingPreviewBox">
-      <div class="flow-item">
-        <div class="flow-header">
-          <span class="flow-tag tag-flow1">Flow 1</span>
-          <span class="flow-mode">Фильтр по странам</span>
-        </div>
-        <div class="flow-body">
-          <div class="flow-condition">
-            Страны: <span id="previewGeoContainer"><strong id="previewGeoText">Страны не выбраны</strong></span>
-          </div>
-          <div class="flow-arrow">&darr; Редирект</div>
-          <div class="flow-destination">
-            <code>https://google.com/</code>
-            <span class="preview-info-tag" data-tooltip="Посетители из выбранных стран перенаправляются на Google" tabindex="0" aria-label="Справка по Flow 1" role="button">ⓘ Справка</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="flow-divider"></div>
-
-      <div class="flow-item">
-        <div class="flow-header">
-          <span class="flow-tag tag-flow2">Flow 2</span>
-          <span class="flow-mode">Основной поток</span>
-        </div>
-        <div class="flow-body">
-          <div class="flow-condition">Все остальные посетители</div>
-          <div class="flow-arrow" id="flow2ArrowLabel">&darr; Оффер · 100%</div>
-          <div class="flow-destination">
-            <strong id="previewOfferText">Оффер не выбран</strong>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- Creation Result Box (Hidden initially) -->
-    <div class="creation-result-box hidden" id="creationResultBox">
+    <div class="creation-result-box hidden" id="creationResultBox" tabindex="-1" aria-labelledby="creationResultHeading">
       <div class="result-success-header">
         <svg class="success-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-        <h3>Кампания успешно создана!</h3>
+        <h3 id="creationResultHeading">Кампания успешно создана!</h3>
       </div>
 
       <div class="result-details">
@@ -191,7 +148,7 @@
           </div>
         </div>
         <div class="result-row">
-          <span class="result-label">Потоки в KT:</span>
+          <span class="result-label">Потоки {% if is_demo %}в симуляторе{% else %}в KT{% endif %}:</span>
           <span class="result-value" id="resultFlowIds">-</span>
         </div>
         <div class="result-row">
@@ -201,7 +158,7 @@
       </div>
 
       <div class="result-actions">
-        <a id="goToEditorLink" href="/editor" class="btn btn-primary">Перейти в Редактор кампании &rarr;</a>
+        <a id="goToEditorLink" href="/{{ current_mode }}/editor" class="btn btn-primary">Перейти в Редактор кампании &rarr;</a>
         <button type="button" id="createAnotherBtn" class="btn btn-secondary">Создать ещё одну</button>
       </div>
     </div>
@@ -210,5 +167,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/offer_combobox.js"></script>
 <script src="/static/js/creator.js"></script>
 {% endblock %}

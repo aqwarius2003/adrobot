@@ -48,6 +48,7 @@ class KeitaroGateway(Protocol):
     async def create_stream(self, payload: dict[str, Any]) -> dict[str, Any]: ...
     async def get_stream(self, stream_id: int) -> dict[str, Any]: ...
     async def update_stream(self, stream_id: int, payload: dict[str, Any]) -> dict[str, Any]: ...
+    async def build_report(self, payload: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class KeitaroClient:
@@ -104,6 +105,10 @@ class KeitaroClient:
             logger.error("KT request failed for %s %s: %s", method, url, exc)
             raise KeitaroApiError(f"Network error connecting to Keitaro: {exc}") from exc
 
+        response_text = response.text
+        if self.api_key:
+            response_text = response_text.replace(self.api_key, "***MASKED_KEY***")
+
         if response.status_code == 401 or response.status_code == 403:
             raise KeitaroAuthError(
                 "Invalid Keitaro API Key or access denied", status_code=response.status_code
@@ -114,19 +119,19 @@ class KeitaroClient:
 
         if response.status_code in (409, 422):
             raise KeitaroConflictError(
-                f"Keitaro rejected request with status {response.status_code}: {response.text}",
+                f"Keitaro rejected request with status {response.status_code}: {response_text}",
                 status_code=response.status_code,
-                response_body=response.text,
+                response_body=response_text,
             )
 
         if response.is_error:
             logger.error(
-                "KT returned error %s for %s: %s", response.status_code, url, response.text
+                "KT returned error %s for %s: %s", response.status_code, url, response_text
             )
             raise KeitaroApiError(
-                f"Keitaro returned status {response.status_code}: {response.text}",
+                f"Keitaro returned status {response.status_code}: {response_text}",
                 status_code=response.status_code,
-                response_body=response.text,
+                response_body=response_text,
             )
 
         try:
@@ -176,3 +181,7 @@ class KeitaroClient:
 
     async def update_stream(self, stream_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._request("PUT", f"/streams/{stream_id}", json_data=payload)
+
+    async def build_report(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await self._request("POST", "/report/build", json_data=payload)
+        return result if isinstance(result, dict) else {"rows": [], "total": 0}

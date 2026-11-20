@@ -1,11 +1,15 @@
 """FastAPI application providing the autonomous Keitaro Admin API simulator."""
 
 import asyncio
-from typing import Any
+import hmac
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
 
+from src.core.config import settings
+from src.domain.campaign_names import CampaignNameConflictError
 from src.simulator.storage import simulator_storage
 
 simulator_app = FastAPI(
@@ -16,11 +20,12 @@ simulator_app = FastAPI(
 
 
 def _check_api_key(api_key: str | None = Header(None, alias="Api-Key")) -> None:
-    """Validate that requests to /admin_api/v1 provide an Api-Key header."""
-    if not api_key or not api_key.strip():
+    """Validate that requests to /admin_api/v1 provide the configured synthetic Api-Key."""
+    expected = settings.DEMO_KEITARO_API_KEY
+    if not api_key or not hmac.compare_digest(api_key.strip(), expected.strip()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Api-Key header is required",
+            detail="Invalid Api-Key header",
         )
 
 
@@ -86,9 +91,17 @@ def get_campaign(campaign_id: int) -> dict[str, Any]:
 
 
 @admin_router.post("/campaigns", status_code=status.HTTP_201_CREATED)
-async def create_campaign(request: Request) -> dict[str, Any]:
+async def create_campaign(request: Request) -> Any:
     payload = await request.json()
-    return simulator_storage.create_campaign(payload)
+    try:
+        return simulator_storage.create_campaign(payload)
+    except CampaignNameConflictError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": str(exc), "code": "campaign_name_exists"},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @admin_router.get("/campaigns/{campaign_id}/streams")
@@ -123,8 +136,39 @@ def get_stream(stream_id: int) -> dict[str, Any]:
     return stream
 
 
+class StreamOfferPayload(BaseModel):
+    offer_id: StrictInt = Field(gt=0, description="Positive integer offer ID")
+    share: StrictInt = Field(ge=0, le=100, description="Integer percentage share between 0 and 100")
+    state: Literal["active", "removed"] | None = "active"
+
+
+class StreamUpdatePayload(BaseModel):
+    name: str | None = None
+    offers: list[StreamOfferPayload] | None = None
+
+    @field_validator("offers")
+    @classmethod
+    def validate_offers(
+        cls, offers: list[StreamOfferPayload] | None
+    ) -> list[StreamOfferPayload] | None:
+        if offers is None:
+            return offers
+        # Check for duplicate offer_id
+        ids = [o.offer_id for o in offers]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate offer_ids in offers payload")
+        # Validate sum of active shares
+        active_shares = [o.share for o in offers if (o.state or "active") == "active"]
+        if active_shares:
+            if sum(active_shares) != 100:
+                raise ValueError(
+                    f"Sum of active shares must be strictly 100%, got {sum(active_shares)}%"
+                )
+        return offers
+
+
 @admin_router.put("/streams/{stream_id}")
-async def update_stream(stream_id: int, request: Request) -> dict[str, Any]:
+async def update_stream(stream_id: int, payload: StreamUpdatePayload) -> dict[str, Any]:
     # Check fault injection
     fault = simulator_storage.active_fault
     if fault:
@@ -149,8 +193,8 @@ async def update_stream(stream_id: int, request: Request) -> dict[str, Any]:
                 stream["offers"][0]["share"] = (stream["offers"][0]["share"] + 1) % 100
                 simulator_storage.streams[stream_id] = stream
 
-    payload = await request.json()
-    updated = simulator_storage.update_stream(stream_id, payload)
+    data = payload.model_dump(exclude_unset=True)
+    updated = simulator_storage.update_stream(stream_id, data)
     if not updated:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -159,35 +203,114 @@ async def update_stream(stream_id: int, request: Request) -> dict[str, Any]:
     return updated
 
 
-simulator_app.include_router(admin_router)
+@admin_router.post("/report/build")
+def build_report(req: dict[str, Any]) -> dict[str, Any]:
+    """Simulate Keitaro report building endpoint (POST /admin_api/v1/report/build)."""
+    if simulator_storage.active_fault:
+        fault_type = simulator_storage.active_fault.get("type")
+        if fault_type == "network_error":
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail="Simulated network error"
+            )
+        if fault_type == "report_forbidden":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Simulated 403 Forbidden on reports"
+            )
 
+    filters = req.get("filters") or []
+    camp_id = None
+    for f in filters:
+        if f.get("name") == "campaign_id":
+            try:
+                camp_id = int(f.get("expression"))
+            except (TypeError, ValueError):
+                pass
+
+    streams = list(simulator_storage.streams.values())
+    if camp_id is not None:
+        streams = [s for s in streams if s.get("campaign_id") == camp_id]
+
+    rows = []
+    for s in streams:
+        rows.append(
+            {
+                "stream_id": s["id"],
+                "clicks": s.get("clicks_today", 0),
+            }
+        )
+
+    return {
+        "rows": rows,
+        "total": sum(r["clicks"] for r in rows),
+    }
+
+
+simulator_app.include_router(admin_router)
 
 # --- Demo Control & Simulation Endpoints ---
 
+demo_control_router = APIRouter(dependencies=[Depends(_check_api_key)])
+
 
 class DeleteStreamOfferRequest(BaseModel):
-    stream_id: int
-    offer_id: int
+    stream_id: StrictInt
+    offer_id: StrictInt
 
 
 class DisableGlobalOfferRequest(BaseModel):
-    offer_id: int
+    offer_id: StrictInt
     available: bool = False
 
 
 class SetFaultRequest(BaseModel):
-    fault: str
+    fault: StrictStr
     params: dict[str, Any] | None = None
 
 
-@simulator_app.post("/demo/reset")
+class UpdateSimulatorStreamOffersRequest(BaseModel):
+    offers: list[StreamOfferPayload] = Field(..., max_length=100)
+    expected_fingerprint: StrictStr | None = None
+
+
+@demo_control_router.put("/demo/admin/campaigns/{campaign_id}/streams/{stream_id}/offers")
+def update_simulator_stream_offers(
+    campaign_id: int, stream_id: int, req: UpdateSimulatorStreamOffersRequest
+) -> dict[str, Any]:
+    try:
+        raw_offers = [o.model_dump() for o in req.offers]
+        return simulator_storage.update_stream_offers(
+            campaign_id=campaign_id,
+            stream_id=stream_id,
+            offers=raw_offers,
+            expected_fingerprint=req.expected_fingerprint,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        msg = str(exc)
+        if "Conflict" in msg:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=msg) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=msg) from exc
+
+
+@demo_control_router.post("/demo/reset")
 def demo_reset() -> dict[str, str]:
+    if settings.APP_ENV == "production":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Simulator reset is disabled in production",
+        )
     simulator_storage.reset()
     return {"status": "ok", "message": "Simulator reset to seed"}
 
 
-@simulator_app.post("/demo/simulate/delete_stream_offer")
+@demo_control_router.post("/demo/simulate/delete_stream_offer")
 def demo_simulate_delete_stream_offer(req: DeleteStreamOfferRequest) -> dict[str, Any]:
+    if settings.APP_ENV == "production":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Simulator fault injection is disabled in production",
+        )
     updated_stream = simulator_storage.delete_stream_offer(req.stream_id, req.offer_id)
     if not updated_stream:
         raise HTTPException(
@@ -201,8 +324,13 @@ def demo_simulate_delete_stream_offer(req: DeleteStreamOfferRequest) -> dict[str
     }
 
 
-@simulator_app.post("/demo/simulate/disable_global_offer")
+@demo_control_router.post("/demo/simulate/disable_global_offer")
 def demo_simulate_disable_global_offer(req: DisableGlobalOfferRequest) -> dict[str, Any]:
+    if settings.APP_ENV == "production":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Simulator fault injection is disabled in production",
+        )
     ok = simulator_storage.disable_global_offer(req.offer_id, req.available)
     if not ok:
         raise HTTPException(
@@ -217,8 +345,13 @@ def demo_simulate_disable_global_offer(req: DisableGlobalOfferRequest) -> dict[s
     }
 
 
-@simulator_app.post("/demo/simulate/fault")
+@demo_control_router.post("/demo/simulate/fault")
 def demo_simulate_fault(req: SetFaultRequest) -> dict[str, Any]:
+    if settings.APP_ENV == "production":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Simulator fault injection is disabled in production",
+        )
     if req.fault == "none":
         simulator_storage.clear_fault()
         return {"status": "ok", "message": "Fault cleared"}
@@ -226,7 +359,7 @@ def demo_simulate_fault(req: SetFaultRequest) -> dict[str, Any]:
     return {"status": "ok", "fault": req.fault, "params": req.params or {}}
 
 
-@simulator_app.get("/demo/state")
+@demo_control_router.get("/demo/state")
 def demo_get_state() -> dict[str, Any]:
     return {
         "offers": simulator_storage.get_offers(),
@@ -237,3 +370,6 @@ def demo_get_state() -> dict[str, Any]:
         "streams": list(simulator_storage.streams.values()),
         "active_fault": simulator_storage.active_fault,
     }
+
+
+simulator_app.include_router(demo_control_router)

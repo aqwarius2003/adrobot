@@ -287,6 +287,25 @@ def test_full_video_editor_scenario(client: TestClient, mock_kt: MockKeitaroEdit
     assert sum(o["share"] for o in flow2["offers"] if o["state"] == "active") == 100
 
 
+def test_single_offer_invalid_weight_is_validation_error(client: TestClient, mock_kt):
+    mock_kt.streams[1002]["offers"] = [{"offer_id": 501, "share": 100, "state": "active"}]
+    campaign = client.post("/api/campaigns/100/fetch-streams").json()
+    stream = next(s for s in campaign["streams"] if s["remote_stream_id"] == 1002)
+    response = client.patch(
+        f"/api/streams/{stream['id']}/offers/501",
+        json={"share": 87, "is_pinned": True, "expected_revision": stream["revision"]},
+    )
+    assert response.status_code == 422
+    assert "100%" in response.json()["detail"]
+    saved = client.get("/api/campaigns/100").json()
+    saved_stream = next(s for s in saved["streams"] if s["id"] == stream["id"])
+    assert saved_stream["revision"] == stream["revision"]
+    assert saved_stream["sync_status"] == "clean"
+    assert saved_stream["offers"][0]["share"] == 100
+    assert saved_stream["offers"][0]["is_pinned"] is False
+    assert mock_kt.last_update_payload is None
+
+
 def test_dirty_fetch_rejected(client: TestClient):
     # Fetch clean
     res = client.post("/api/campaigns/100/fetch-streams")

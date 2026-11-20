@@ -10,13 +10,22 @@ from src.core.database import Base
 
 config = context.config
 
-if config.config_file_name is not None:
+if config.config_file_name is not None and not config.attributes.get("skip_logging"):
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
 
-# Override URL from application settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Override URL from application settings based on mode (real, demo, or security)
+mode = context.get_x_argument(as_dictionary=True).get("mode", settings.KT_MODE)
+if mode == "demo":
+    target_url = settings.get_demo_database_url()
+elif mode == "security":
+    target_url = settings.get_security_database_url()
+else:
+    target_url = settings.get_real_database_url()
+
+target_url = config.attributes.get("database_url", target_url)
+config.set_main_option("sqlalchemy.url", target_url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:

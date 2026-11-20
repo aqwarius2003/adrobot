@@ -1,7 +1,13 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import JSONResponse
 
 from src.api.dependencies import get_creator_service, get_editor_service, get_keitaro_client
 from src.core.config import settings
+from src.core.connection_context import ConnectionContext, get_connection_context
+from src.core.logging import logger
+from src.domain.campaign_names import CampaignNameConflictError
 from src.domain.iso_countries import COUNTRY_CATALOG
 from src.domain.schemas import (
     CampaignCreateRequest,
@@ -21,7 +27,7 @@ from src.services.editor_service import (
 )
 from src.services.keitaro_client import KeitaroApiError, KeitaroGateway
 
-router = APIRouter(prefix="/api", tags=["Campaigns"])
+router = APIRouter(tags=["Campaigns"])
 
 
 @router.get("/geo/countries", response_model=list[CountryCatalogItem])
@@ -128,15 +134,16 @@ async def list_campaigns(
 )
 async def create_campaign(
     request: CampaignCreateRequest,
+    _context: ConnectionContext = Depends(get_connection_context),
     creator_service: CampaignCreatorService = Depends(get_creator_service),
-) -> CampaignCreateResponse:
-    if not settings.is_demo_mode:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="creator_unavailable_in_real_mode: Создание кампаний через интерфейс доступно только в демо-режиме (KT_MODE=demo). В рабочем режиме Keitaro поддерживается только редактирование существующих кампаний.",
-        )
+) -> CampaignCreateResponse | JSONResponse:
     try:
         return await creator_service.create_campaign(request)
+    except CampaignNameConflictError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": str(exc), "code": "campaign_name_exists", "field": "name"},
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -167,3 +174,47 @@ async def fetch_campaign_streams(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except KeitaroApiError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.get("/campaigns/{id}/stream-stats")
+async def get_campaign_stream_stats(
+    id: int,
+    kt_client: KeitaroGateway = Depends(get_keitaro_client),
+) -> dict[str, Any]:
+    """Retrieve today's clicks for streams in the specified campaign via Keitaro report API."""
+    payload = {
+        "range": {
+            "interval": "today",
+            "timezone": settings.REPORT_TIMEZONE,
+        },
+        "dimensions": ["stream_id"],
+        "measures": ["clicks"],
+        "filters": [
+            {
+                "name": "campaign_id",
+                "operator": "EQUALS",
+                "expression": id,
+            }
+        ],
+    }
+    try:
+        report = await kt_client.build_report(payload)
+        rows = report.get("rows") if isinstance(report, dict) else []
+        clicks_by_stream = {
+            int(r["stream_id"]): int(r.get("clicks", 0)) for r in (rows or []) if "stream_id" in r
+        }
+        return {
+            "status": "ok",
+            "campaign_id": id,
+            "clicks_by_stream": clicks_by_stream,
+            "timezone": settings.REPORT_TIMEZONE,
+        }
+    except Exception as exc:
+        logger.warning("Failed to fetch stream clicks stats for campaign %s: %s", id, exc)
+        return {
+            "status": "unavailable",
+            "campaign_id": id,
+            "clicks_by_stream": {},
+            "timezone": settings.REPORT_TIMEZONE,
+            "error": str(exc),
+        }

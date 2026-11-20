@@ -83,22 +83,27 @@ async def test_demo_endpoints_allowed_in_demo_mode():
 def test_ui_templates_render_demo_badge_in_demo_mode():
     settings.KT_MODE = "demo"
     try:
-        res = client.get("/editor")
+        res = client.get("/demo/editor")
         assert res.status_code == 200
-        assert "Демо · данные симулятора" in res.text
-        assert "Управление симулятором Keitaro" in res.text
-        assert "demoResetBtn" in res.text
+        assert "Демо · симулятор" in res.text
+        assert "Keitaro — симулятор" in res.text
+        assert "is_demo: true" in res.text
 
-        res_cr = client.get("/creator")
+        res_cr = client.get("/demo/creator")
         assert res_cr.status_code == 200
-        assert "Демо · данные симулятора" in res_cr.text
+        assert "Демо · симулятор" in res_cr.text
     finally:
         settings.KT_MODE = "real"
 
 
 def test_ui_templates_render_real_status_in_real_mode():
     settings.KT_MODE = "real"
-    res = client.get("/editor")
+    from src.core.security import get_security_store
+
+    store = get_security_store()
+    token = store.create_session("real")
+    res = client.get("/real/editor", cookies={"adrobot_session": token})
     assert res.status_code == 200
-    assert "Управление симулятором Keitaro" not in res.text
-    assert "demoResetBtn" not in res.text
+    assert "Подключение: Keitaro" in res.text
+    assert "Keitaro — симулятор" not in res.text
+    assert "is_demo: false" in res.text

@@ -102,6 +102,7 @@ def test_simulator_delete_stream_offer_and_rebalance():
     res_del = client.post(
         "/demo/simulate/delete_stream_offer",
         json={"stream_id": 11, "offer_id": 103},
+        headers=AUTH_HEADERS,
     )
     assert res_del.status_code == 200
     stream = res_del.json()["stream"]
@@ -126,6 +127,7 @@ def test_simulator_disable_global_offer():
     res_disable = client.post(
         "/demo/simulate/disable_global_offer",
         json={"offer_id": 105, "available": False},
+        headers=AUTH_HEADERS,
     )
     assert res_disable.status_code == 200
 
@@ -139,6 +141,7 @@ def test_simulator_fault_injection():
     client.post(
         "/demo/simulate/fault",
         json={"fault": "reject_update", "params": {"status_code": 422, "message": "Limit hit"}},
+        headers=AUTH_HEADERS,
     )
     res_put = client.put(
         "/admin_api/v1/streams/11",
@@ -149,7 +152,7 @@ def test_simulator_fault_injection():
     assert "Limit hit" in res_put.text
 
     # Clear fault
-    client.post("/demo/simulate/fault", json={"fault": "none"})
+    client.post("/demo/simulate/fault", json={"fault": "none"}, headers=AUTH_HEADERS)
     res_put_ok = client.put(
         "/admin_api/v1/streams/11",
         json={"offers": [{"offer_id": 101, "share": 100, "state": "active"}]},
@@ -163,11 +166,12 @@ def test_simulator_reset():
     client.post(
         "/demo/simulate/delete_stream_offer",
         json={"stream_id": 11, "offer_id": 101},
+        headers=AUTH_HEADERS,
     )
     assert len(simulator_storage.get_stream(11)["offers"]) == 2
 
     # Reset
-    res_reset = client.post("/demo/reset")
+    res_reset = client.post("/demo/reset", headers=AUTH_HEADERS)
     assert res_reset.status_code == 200
     # Seed offers restored: 3 offers (34/33/33)
     stream = simulator_storage.get_stream(11)

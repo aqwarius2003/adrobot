@@ -1,4 +1,7 @@
+import hashlib
+import json
 from dataclasses import dataclass
+from typing import Any
 
 
 class WeightDistributionError(ValueError):
@@ -101,3 +104,30 @@ def calculate_weights(offers: list[OfferWeightState]) -> list[OfferWeightState]:
     # Return all in original or stable position order
     all_results = sorted(result_active + result_inactive, key=lambda x: (x.position, x.offer_id))
     return all_results
+
+
+def compute_stream_fingerprint(stream_data: dict[str, Any]) -> str:
+    """Create deterministic SHA256 hash of stream offers and essential routing fields."""
+    offers = stream_data.get("offers") or []
+    normalized_offers = sorted(
+        [
+            {
+                "offer_id": o.get("offer_id"),
+                "share": o.get("share"),
+                "state": o.get("state", "active"),
+            }
+            for o in offers
+        ],
+        key=lambda x: x["offer_id"] or 0,
+    )
+    content = {
+        "type": stream_data.get("type"),
+        "schema": stream_data.get("schema"),
+        "action_type": stream_data.get("action_type"),
+        "action_payload": stream_data.get("action_payload"),
+        "filters": stream_data.get("filters") or [],
+        "landings": stream_data.get("landings") or [],
+        "offers": normalized_offers,
+    }
+    encoded = json.dumps(content, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

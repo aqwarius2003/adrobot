@@ -10,6 +10,13 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentCampaignId = null;
   let currentCampaignData = null;
 
+  const apiPrefix = (window.APP_CONFIG && window.APP_CONFIG.api_prefix) || '/api';
+  const currentMode = (window.APP_CONFIG && window.APP_CONFIG.current_mode) || 'real';
+  const safeFetch =
+    (window.apiClient && window.apiClient.fetch) ||
+    window.apiFetch ||
+    (typeof window.fetch === 'function' ? window.fetch.bind(window) : fetch);
+
   // Check URL query parameters
   const urlParams = new URLSearchParams(window.location.search);
   const paramCampaignId = urlParams.get('campaign_id');
@@ -25,33 +32,52 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load campaigns list
   async function loadCampaigns() {
     try {
-      const res = await fetch('/api/campaigns');
+      const res = await safeFetch(`${apiPrefix}/campaigns`);
       if (!res.ok) throw new Error('Failed to load campaigns');
       const campaigns = await res.json();
 
-      campaignSelect.innerHTML = '<option value="">-- Выберите кампанию --</option>';
+      // Separate campaign selection per mode
+      const savedCampaignId = localStorage.getItem(`adrobot_selected_campaign_${currentMode}`);
+      const effectiveId = paramCampaignId
+        ? parseInt(paramCampaignId, 10)
+        : savedCampaignId
+        ? parseInt(savedCampaignId, 10)
+        : null;
+
+      const targetAutoId = effectiveId && campaigns.some((c) => c.remote_campaign_id === effectiveId)
+        ? effectiveId
+        : (window.APP_CONFIG && window.APP_CONFIG.is_demo && campaigns.length > 0)
+        ? campaigns[0].remote_campaign_id
+        : null;
+
+      let optionsHtml = '<option value="">-- Выберите кампанию --</option>';
       campaigns.forEach((c) => {
-        const isSelected =
-          paramCampaignId && parseInt(paramCampaignId, 10) === c.remote_campaign_id;
+        const isSelected = targetAutoId && targetAutoId === c.remote_campaign_id;
         const selectedAttr = isSelected ? 'selected' : '';
-        campaignSelect.innerHTML += `<option value="${c.remote_campaign_id}" ${selectedAttr}>[ID: ${c.remote_campaign_id}] ${escapeHtml(c.name)}</option>`;
+        optionsHtml += `<option value="${c.remote_campaign_id}" ${selectedAttr}>[ID: ${c.remote_campaign_id}] ${escapeHtml(c.name)}</option>`;
       });
+      campaignSelect.innerHTML = optionsHtml;
 
       // Synchronize context and load campaign data
-      if (paramCampaignId) {
-        currentCampaignId = parseInt(paramCampaignId, 10);
-        campaignSelect.value = currentCampaignId;
+      if (targetAutoId) {
+        currentCampaignId = targetAutoId;
+        campaignSelect.value = String(currentCampaignId);
         fetchStreamsBtn.disabled = false;
+        fetchStreamsBtn.removeAttribute('title');
+        localStorage.setItem(`adrobot_selected_campaign_${currentMode}`, currentCampaignId);
+        updateViewInKtLink(currentCampaignId);
         await loadCampaignData(currentCampaignId);
-      } else if (window.APP_CONFIG && window.APP_CONFIG.is_demo && campaigns.length > 0) {
-        currentCampaignId = campaigns[0].remote_campaign_id;
-        campaignSelect.value = currentCampaignId;
-        fetchStreamsBtn.disabled = false;
-        await loadCampaignData(currentCampaignId);
+      } else {
+        updateViewInKtLink(null);
+        fetchStreamsBtn.disabled = true;
+        fetchStreamsBtn.title = 'Выберите кампанию из списка для загрузки потоков';
       }
     } catch (err) {
       console.warn('Could not load campaigns:', err);
-      showToast('Не удалось загрузить список кампаний', 'error');
+      if (err && err.isAppUnreachable) {
+        showAppUnreachableNotice();
+      }
+      showToast(err.message, 'error');
     }
   }
   loadCampaigns();
@@ -62,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateViewInKtLink(campaignId);
 
     try {
-      const res = await fetch(`/api/campaigns/${campaignId}`);
+      const res = await safeFetch(`${apiPrefix}/campaigns/${campaignId}`);
       if (res.status === 404) {
         // Campaign exists in KT list, but not imported locally yet
         currentCampaignData = null;
@@ -76,11 +102,20 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const data = await res.json();
+      if (currentCampaignId && data.remote_campaign_id !== currentCampaignId) {
+        console.error('Mismatch campaign ID', data.remote_campaign_id, currentCampaignId);
+        showToast('Ошибка: полученные данные не соответствуют выбранной кампании', 'error');
+        return;
+      }
       currentCampaignData = data;
       renderCampaignStreams(data);
       updateSyncTimeDisplay(data.last_sync_at);
+      fetchStreamStats(campaignId);
     } catch (err) {
       console.warn('Error loading local campaign state:', err);
+      if (err && err.isAppUnreachable) {
+        showAppUnreachableNotice();
+      }
       showToast(err.message, 'error');
     }
   }
@@ -109,9 +144,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const ktUrl = window.APP_CONFIG && window.APP_CONFIG.keitaro_base_url;
     if (remoteCampaignId && ktUrl && !isDemo) {
       const cleanBase = ktUrl.replace(/\/+$/, '');
-      viewInKtLink.href = `${cleanBase}/admin/#!/campaigns/${remoteCampaignId}`;
+      viewInKtLink.href = `${cleanBase}/admin/#!/campaign/${remoteCampaignId}/main`;
+      viewInKtLink.target = '_blank';
+      viewInKtLink.rel = 'noopener noreferrer';
       viewInKtLink.classList.remove('hidden');
     } else {
+      viewInKtLink.removeAttribute('href');
       viewInKtLink.classList.add('hidden');
     }
   }
@@ -130,18 +168,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const val = campaignSelect.value;
     if (val) {
       currentCampaignId = parseInt(val, 10);
+      updateViewInKtLink(currentCampaignId);
       fetchStreamsBtn.disabled = false;
+      fetchStreamsBtn.removeAttribute('title');
       const newUrl = new URL(window.location);
       newUrl.searchParams.set('campaign_id', currentCampaignId);
       window.history.replaceState({}, '', newUrl);
+      localStorage.setItem(`adrobot_selected_campaign_${currentMode}`, currentCampaignId);
       await loadCampaignData(currentCampaignId);
     } else {
       currentCampaignId = null;
       currentCampaignData = null;
       fetchStreamsBtn.disabled = true;
+      fetchStreamsBtn.title = 'Выберите кампанию из списка для загрузки потоков';
       const newUrl = new URL(window.location);
       newUrl.searchParams.delete('campaign_id');
       window.history.replaceState({}, '', newUrl);
+      localStorage.removeItem(`adrobot_selected_campaign_${currentMode}`);
       renderEmptyState();
       clearNotice();
       updateViewInKtLink(null);
@@ -161,7 +204,7 @@ document.addEventListener('DOMContentLoaded', () => {
     clearNotice();
 
     try {
-      const res = await fetch(`/api/campaigns/${campaignId}/fetch-streams`, {
+      const res = await safeFetch(`${apiPrefix}/campaigns/${campaignId}/fetch-streams`, {
         method: 'POST',
       });
 
@@ -177,16 +220,26 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error(data.detail || 'Ошибка при загрузке потоков из трекера');
       }
 
+      if (currentCampaignId && data.remote_campaign_id !== currentCampaignId) {
+        console.error('Mismatch campaign ID', data.remote_campaign_id, currentCampaignId);
+        showToast('Ошибка: полученные данные не соответствуют выбранной кампании', 'error');
+        return;
+      }
+
       currentCampaignData = data;
       renderCampaignStreams(data);
       updateSyncTimeDisplay(data.last_sync_at || new Date().toISOString());
+      fetchStreamStats(campaignId);
 
       const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
       showToast(
-        isDemo ? 'Потоки загружены из демо-симулятора' : 'Потоки успешно синхронизированы с Keitaro',
+        isDemo ? 'Потоки загружены из симулятора' : 'Потоки успешно синхронизированы с Keitaro',
         'success'
       );
     } catch (err) {
+      if (err && err.isAppUnreachable) {
+        showAppUnreachableNotice();
+      }
       showToast(err.message, 'error');
     } finally {
       fetchStreamsBtn.disabled = false;
@@ -194,10 +247,33 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function showNotice(msg, type = 'info') {
+  function showNotice(msg, type = 'info', actionBtn = null) {
     editorNotice.className = `editor-notice notice-${type}`;
-    editorNotice.textContent = msg;
+    editorNotice.textContent = ['conflict', 'error', 'warning'].includes(type) ? window.humanizeError(msg) : msg;
+    if (actionBtn) {
+      editorNotice.appendChild(actionBtn);
+    }
     editorNotice.classList.remove('hidden');
+  }
+
+  function showAppUnreachableNotice() {
+    const reconnectBtn = document.createElement('button');
+    reconnectBtn.className = 'btn btn-secondary btn-sm';
+    reconnectBtn.style.marginLeft = '12px';
+    reconnectBtn.textContent = 'Повторить попытку';
+    reconnectBtn.addEventListener('click', async () => {
+      clearNotice();
+      if (currentCampaignId) {
+        await loadCampaignData(currentCampaignId);
+      } else {
+        await loadCampaigns();
+      }
+    });
+    showNotice(
+      'Нет связи с приложением. Проверьте, что сервер запущен.',
+      'error',
+      reconnectBtn
+    );
   }
 
   function clearNotice() {
@@ -206,6 +282,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderCampaignStreams(campaign) {
+    streamsContainer.querySelectorAll('.stream-card').forEach((c) => {
+      if (c._combobox && typeof c._combobox.destroy === 'function') c._combobox.destroy();
+    });
     streamsContainer.innerHTML = '';
 
     if (!campaign.streams || campaign.streams.length === 0) {
@@ -233,33 +312,65 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  let currentStatsSeq = 0;
+
+  async function fetchStreamStats(campaignId) {
+    const seq = ++currentStatsSeq;
+    try {
+      const res = await safeFetch(`${apiPrefix}/campaigns/${campaignId}/stream-stats`);
+      if (!res.ok) return;
+      const data = await res.json();
+      // Protect against out-of-order responses when switching campaigns or mode
+      if (seq !== currentStatsSeq || campaignId !== currentCampaignId) return;
+
+      if (data.status === 'ok') {
+        const clicksMap = data.clicks_by_stream || {};
+        document.querySelectorAll('.stream-clicks[id^="stream-clicks-"]').forEach((el) => {
+          const streamId = parseInt(el.id.replace('stream-clicks-', ''), 10);
+          if (!isNaN(streamId)) {
+            const clicks = clicksMap[streamId] !== undefined ? clicksMap[streamId] : 0;
+            el.textContent = String(clicks);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to load stream clicks stats:', err);
+    }
+  }
+
   // Compact row for streams without editable offers (Flow 1 / redirect / opaque)
+  // Neutral display label only; preserve the upstream stream name in data.
   function createUnmanagedStreamRow(stream) {
     const row = document.createElement('div');
     row.className = 'unmanaged-stream-row';
     row.id = `stream-row-${stream.id}`;
 
-    const titleInfo = document.createElement('div');
-    titleInfo.className = 'unmanaged-stream-info';
-
     const title = document.createElement('span');
-    title.className = 'unmanaged-stream-name';
-    title.textContent = stream.name;
+    title.className = 'unmanaged-stream-title';
+    title.textContent = `Stream: Flow ${stream.position} (#${stream.position})`;
 
-    const idBadge = document.createElement('span');
-    idBadge.className = 'stream-id-badge';
-    idBadge.textContent = `Stream ID: ${stream.remote_stream_id}`;
+    const meta = document.createElement('span');
+    meta.className = 'unmanaged-stream-meta';
+    meta.innerHTML = ` filter by: None, stream_id: ${escapeHtml(String(stream.remote_stream_id))}, clicks today: <span class="stream-clicks" id="stream-clicks-${escapeHtml(String(stream.remote_stream_id))}">—</span>`;
 
-    titleInfo.appendChild(title);
-    titleInfo.appendChild(idBadge);
-
-    const pill = document.createElement('span');
-    pill.className = 'unmanaged-stream-pill';
-    pill.textContent = 'Нет редактируемых офферов';
-
-    row.appendChild(titleInfo);
-    row.appendChild(pill);
+    row.appendChild(title);
+    row.appendChild(meta);
     return row;
+  }
+
+  function getWeightEditLimits(stream, offer) {
+    const active = stream.offers.filter((item) => item.state === 'active');
+    const others = active.filter((item) => item.offer_id !== offer.offer_id);
+    const pinnedShare = others.filter((item) => item.is_pinned).reduce((sum, item) => sum + item.share, 0);
+    const max = Math.max(0, 100 - pinnedShare);
+    const hasRecipient = others.some((item) => !item.is_pinned);
+    const min = hasRecipient ? 0 : max;
+    const locked = ['publishing', 'verifying', 'unknown'].includes(stream.sync_status);
+    let reason = '';
+    if (locked) reason = 'Дождитесь завершения синхронизации потока.';
+    else if (active.length === 1) reason = 'Единственный активный оффер получает 100%. Добавьте ещё один оффер, чтобы менять доли.';
+    else if (min === max) reason = 'Некуда перераспределить долю. Снимите закрепление с другого оффера, чтобы менять проценты.';
+    return { min, max, disabled: locked || min === max, reason };
   }
 
   function createStreamCard(stream) {
@@ -298,26 +409,44 @@ document.addEventListener('DOMContentLoaded', () => {
     if (stream.is_managed) {
       const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
       const pushBtn = document.createElement('button');
-      pushBtn.className = 'btn btn-primary btn-sm';
+      pushBtn.className = 'btn btn-primary';
       pushBtn.textContent = isDemo ? 'Push to Demo' : 'Push to KT';
       if (isDemo) {
         pushBtn.setAttribute(
           'data-tooltip',
-          'Опубликовать активные офферы в автономный демо-симулятор'
+          'Опубликовать активные офферы в симулятор'
         );
       } else {
         pushBtn.setAttribute('data-tooltip', 'Опубликовать активные офферы в Keitaro');
       }
-      pushBtn.disabled = !isDirty || stream.sync_status === 'publishing';
+      if (stream.sync_status === 'unknown') {
+        const reconcileBtn = document.createElement('button');
+        reconcileBtn.className = 'btn btn-primary';
+        reconcileBtn.textContent = 'Проверить результат';
+        reconcileBtn.setAttribute(
+          'data-tooltip',
+          isDemo
+            ? 'Проверить фактическое состояние потока в симуляторе без отправки новых данных'
+            : 'Проверить фактическое состояние потока в Keitaro без отправки новых данных'
+        );
+        reconcileBtn.addEventListener('click', () => reconcileStream(stream));
+        actions.appendChild(reconcileBtn);
+      }
+
+      pushBtn.disabled = !isDirty || ['publishing', 'verifying', 'unknown', 'conflict'].includes(stream.sync_status);
       pushBtn.addEventListener('click', () => pushStream(stream));
 
       const cancelBtn = document.createElement('button');
-      cancelBtn.className = 'btn btn-secondary btn-sm';
+      cancelBtn.className = 'btn btn-secondary';
       cancelBtn.textContent = 'Cancel';
-      cancelBtn.disabled = !isDirty || stream.sync_status === 'publishing';
+      // Cancel is enabled when stream is dirty OR in conflict
+      cancelBtn.disabled = (!isDirty && stream.sync_status !== 'conflict') || stream.sync_status === 'publishing';
+      cancelBtn.setAttribute('data-tooltip', 'Сбросить черновик до последнего синхронизированного состояния');
       cancelBtn.addEventListener('click', () => cancelStream(stream));
 
-      actions.appendChild(pushBtn);
+      if (stream.sync_status !== 'unknown') {
+        actions.appendChild(pushBtn);
+      }
       actions.appendChild(cancelBtn);
     }
 
@@ -359,12 +488,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Offer Name & ID
       const tdName = document.createElement('td');
-      tdName.innerHTML = `
-        <div class="offer-name-cell">${escapeHtml(off.name)}</div>
-        <div class="offer-id-sub">Offer ID: ${off.offer_id}</div>`;
+      tdName.className = 'col-offer';
+      const nameDiv = document.createElement('div');
+      nameDiv.className = 'offer-name-cell';
+      nameDiv.textContent = off.name || `Оффер #${off.offer_id}`;
+      const idDiv = document.createElement('div');
+      idDiv.className = 'offer-id-sub';
+      idDiv.textContent = `Offer ID: ${off.offer_id}`;
+      tdName.appendChild(nameDiv);
+      tdName.appendChild(idDiv);
 
       // Share Input
       const tdShare = document.createElement('td');
+      tdShare.dataset.label = 'Доля';
       if (isRemoved) {
         tdShare.innerHTML = '<span>0%</span>';
       } else {
@@ -372,14 +508,38 @@ document.addEventListener('DOMContentLoaded', () => {
         wrapper.className = 'weight-input-wrapper';
         const input = document.createElement('input');
         input.type = 'number';
-        input.min = '0';
-        input.max = '100';
+        input.setAttribute(
+          'aria-label',
+          `Доля оффера ${off.name || off.offer_id}, поток Flow ${stream.position || ''}`
+        );
+        const limits = getWeightEditLimits(stream, off);
+        input.min = String(limits.min);
+        input.max = String(limits.max);
+        input.step = '1';
+        input.disabled = limits.disabled;
+        input.title = limits.reason;
+        wrapper.title = limits.reason;
+        if (!input.dataset) input.dataset = {};
+        input.dataset.offerId = String(off.offer_id);
+        input.dataset.controlRole = 'weight-input';
+        input.setAttribute('data-offer-id', String(off.offer_id));
+        input.setAttribute('data-control-role', 'weight-input');
         input.className = 'form-control weight-input';
         input.value = off.share;
-        input.addEventListener('change', () => {
-          const newShare = parseInt(input.value, 10);
-          if (!isNaN(newShare)) {
-            updateWeight(stream, off.offer_id, newShare, true);
+        input.addEventListener('change', async () => {
+          const newShare = Number(input.value);
+          if (input.disabled || !String(input.value).trim() || !Number.isInteger(newShare) || newShare < limits.min || newShare > limits.max) {
+            input.value = off.share;
+            return;
+          }
+          if (newShare === off.share) return;
+          input.disabled = true;
+          try {
+            await updateWeight(stream, off.offer_id, newShare, true);
+          } finally {
+            // A successful response replaces the card; on failure restore this input.
+            input.value = off.share;
+            input.disabled = limits.disabled;
           }
         });
         wrapper.appendChild(input);
@@ -389,10 +549,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Pin Toggle Button
       const tdPin = document.createElement('td');
+      tdPin.className = 'col-pin';
+      tdPin.dataset.label = 'Pin';
       const pinBtn = document.createElement('button');
       pinBtn.type = 'button';
       pinBtn.className = 'btn-pin';
       pinBtn.disabled = isRemoved;
+      if (!pinBtn.dataset) pinBtn.dataset = {};
+      pinBtn.dataset.offerId = String(off.offer_id);
+      pinBtn.dataset.controlRole = 'pin-btn';
+      pinBtn.setAttribute('data-offer-id', String(off.offer_id));
+      pinBtn.setAttribute('data-control-role', 'pin-btn');
+      pinBtn.setAttribute('aria-label', `Закрепить долю оффера ${off.name || off.offer_id}`);
       pinBtn.setAttribute('aria-pressed', off.is_pinned ? 'true' : 'false');
       pinBtn.innerHTML = off.is_pinned ? '📌 Pinned' : '📍 Unpinned';
       pinBtn.addEventListener('click', () => {
@@ -419,15 +587,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const bringBackBtn = document.createElement('button');
         bringBackBtn.className = 'btn btn-secondary btn-sm';
         bringBackBtn.textContent = 'Bring back';
-        bringBackBtn.addEventListener('click', () => bringBackOffer(stream, off.offer_id));
+        if (!bringBackBtn.dataset) bringBackBtn.dataset = {};
+        bringBackBtn.dataset.offerId = String(off.offer_id);
+        bringBackBtn.dataset.controlRole = 'bring-back-btn';
+        bringBackBtn.setAttribute('data-offer-id', String(off.offer_id));
+        bringBackBtn.setAttribute('data-control-role', 'bring-back-btn');
+        bringBackBtn.setAttribute('aria-label', `Восстановить оффер ${off.name || off.offer_id}`);
+        bringBackBtn.addEventListener('click', () => bringBackOffer(stream, off.offer_id, bringBackBtn));
         tdActions.appendChild(bringBackBtn);
       } else {
         const removeBtn = document.createElement('button');
         removeBtn.className = 'btn btn-secondary btn-sm';
         removeBtn.textContent = 'Remove';
+        if (!removeBtn.dataset) removeBtn.dataset = {};
+        removeBtn.dataset.offerId = String(off.offer_id);
+        removeBtn.dataset.controlRole = 'remove-btn';
+        removeBtn.setAttribute('data-offer-id', String(off.offer_id));
+        removeBtn.setAttribute('data-control-role', 'remove-btn');
+        removeBtn.setAttribute('aria-label', `Удалить оффер ${off.name || off.offer_id}`);
         removeBtn.disabled =
           activeCount <= 1 && stream.offers.filter((o) => o.state === 'active').length <= 1;
-        removeBtn.addEventListener('click', () => removeOffer(stream, off.offer_id));
+        removeBtn.addEventListener('click', () => removeOffer(stream, off.offer_id, removeBtn));
         tdActions.appendChild(removeBtn);
       }
 
@@ -442,7 +622,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tableWrapper.appendChild(table);
     card.appendChild(tableWrapper);
 
-    // Footer with Autocomplete Search
+    // Footer with Autocomplete Search (Task 3.1 §3 & §5)
     const footer = document.createElement('div');
     footer.className = 'stream-card-footer';
 
@@ -450,15 +630,13 @@ document.addEventListener('DOMContentLoaded', () => {
     addCombobox.className = 'add-offer-combobox';
 
     const inputWrapper = document.createElement('div');
-    inputWrapper.style.position = 'relative';
-    inputWrapper.style.width = '280px';
+    inputWrapper.className = 'combobox-input-wrapper';
 
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
     searchInput.className = 'form-control inline-search-input';
     searchInput.placeholder = 'Поиск оффера по ID или названию...';
     searchInput.autocomplete = 'off';
-    searchInput.style.height = '32px';
 
     const dropdown = document.createElement('div');
     dropdown.className = 'dropdown-list hidden editor-offer-dropdown';
@@ -472,70 +650,32 @@ document.addEventListener('DOMContentLoaded', () => {
     addBtn.textContent = 'Add';
     addBtn.disabled = true;
 
-    let selectedOffer = null;
-    let debounceTimer = null;
-
-    searchInput.addEventListener('input', () => {
-      clearTimeout(debounceTimer);
-      selectedOffer = null;
-      addBtn.disabled = true;
-
-      const q = searchInput.value.trim();
-      if (q.length < 1) {
-        dropdown.classList.add('hidden');
-        return;
-      }
-
-      debounceTimer = setTimeout(async () => {
-        try {
-          const res = await fetch(`/api/offers?search=${encodeURIComponent(q)}`);
-          if (!res.ok) throw new Error('Search failed');
-          const offers = await res.json();
-          renderEditorOfferDropdown(offers, dropdown, searchInput, addBtn, (chosen) => {
-            selectedOffer = chosen;
-          });
-        } catch (err) {
-          console.warn('Editor offer search error:', err);
-        }
-      }, 250);
-    });
-
-    searchInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (!selectedOffer) {
-          const firstItem = dropdown.querySelector('.dropdown-item[data-id]');
-          if (firstItem) {
-            firstItem.click();
-            addBtn.click();
-          }
-        } else {
-          addBtn.click();
-        }
-      } else if (e.key === 'Escape') {
-        dropdown.classList.add('hidden');
-      }
-    });
-
-    document.addEventListener('click', (e) => {
-      if (!inputWrapper.contains(e.target)) {
-        dropdown.classList.add('hidden');
-      }
+    const combobox = new window.OfferCombobox({
+      input: searchInput,
+      dropdown: dropdown,
+      addBtn: addBtn,
+      cardElement: card,
+      searchFn: async (query) => {
+        const res = await safeFetch(`${apiPrefix}/offers?search=${encodeURIComponent(query)}`);
+        if (!res.ok) throw new Error('Search failed');
+        return await res.json();
+      },
+      getExcludedOfferIds: () => {
+        // Exclude offers already active in this stream (archived offers can be offered for bring-back)
+        return (stream.offers || [])
+          .filter((o) => o.state === 'active')
+          .map((o) => o.offer_id);
+      },
+      onSelect: () => {},
+      onClear: () => {},
     });
 
     addBtn.addEventListener('click', async () => {
-      if (!selectedOffer) return;
-      const targetId = selectedOffer.id;
+      const selected = combobox.selectedOffer;
+      if (!selected) return;
+      const targetId = selected.id;
 
-      const alreadyActive = stream.offers.find(
-        (o) => o.offer_id === targetId && o.state === 'active'
-      );
-      if (alreadyActive) {
-        showToast(`Оффер [ID: ${targetId}] уже активен в этом потоке`, 'warning');
-        return;
-      }
-
-      const alreadyArchived = stream.offers.find(
+      const alreadyArchived = (stream.offers || []).find(
         (o) => o.offer_id === targetId && o.state === 'removed'
       );
       if (alreadyArchived) {
@@ -544,14 +684,12 @@ document.addEventListener('DOMContentLoaded', () => {
         await addOffer(stream, targetId);
       }
 
-      searchInput.value = '';
-      selectedOffer = null;
-      addBtn.disabled = true;
-      dropdown.classList.add('hidden');
+      combobox.reset();
     });
 
     addCombobox.appendChild(inputWrapper);
     addCombobox.appendChild(addBtn);
+    card._combobox = combobox;
 
     // Summary stats
     const stats = document.createElement('div');
@@ -570,42 +708,12 @@ document.addEventListener('DOMContentLoaded', () => {
     return card;
   }
 
-  function renderEditorOfferDropdown(offers, dropdown, searchInput, addBtn, onSelect) {
-    if (!offers || offers.length === 0) {
-      dropdown.innerHTML = '<div class="dropdown-item">Ничего не найдено</div>';
-      dropdown.classList.remove('hidden');
-      return;
-    }
-
-    dropdown.innerHTML = offers
-      .map(
-        (o) =>
-          `<div class="dropdown-item" data-id="${o.id}" data-name="${escapeHtml(o.name)}">[ID: ${o.id}] ${escapeHtml(o.name)}</div>`
-      )
-      .join('');
-    dropdown.classList.remove('hidden');
-
-    dropdown.querySelectorAll('.dropdown-item[data-id]').forEach((el) => {
-      el.addEventListener('click', () => {
-        const id = parseInt(el.getAttribute('data-id'), 10);
-        const name = el.getAttribute('data-name');
-        if (id) {
-          const chosen = { id, name };
-          onSelect(chosen);
-          searchInput.value = `[ID: ${id}] ${name}`;
-          addBtn.disabled = false;
-          dropdown.classList.add('hidden');
-        }
-      });
-    });
-  }
-
   function getStatusText(status, isManaged) {
     if (!isManaged) return 'Нет редактируемых офферов';
     const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
     switch (status) {
       case 'clean':
-        return isDemo ? 'Синхронизирован с демо' : 'Синхронизирован с KT';
+        return isDemo ? 'Синхронизирован с симулятором' : 'Синхронизирован с Keitaro';
       case 'dirty':
         return 'Неопубликованные изменения';
       case 'publishing':
@@ -627,10 +735,14 @@ document.addEventListener('DOMContentLoaded', () => {
   async function addOffer(stream, offerId) {
     clearNotice();
     try {
-      const res = await fetch(`/api/streams/${stream.id}/offers`, {
+      const res = await safeFetch(`${apiPrefix}/streams/${stream.id}/offers`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ offer_id: offerId, expected_revision: stream.revision }),
+        body: JSON.stringify({
+          offer_id: offerId,
+          expected_revision: stream.revision,
+          expected_remote_campaign_id: currentCampaignId,
+        }),
       });
       const updatedStream = await res.json();
       if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка добавления оффера');
@@ -641,50 +753,69 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  async function removeOffer(stream, offerId) {
+  async function removeOffer(stream, offerId, btn = null) {
     clearNotice();
+    if (btn) btn.disabled = true;
     try {
-      const res = await fetch(`/api/streams/${stream.id}/offers/${offerId}/remove`, {
+      const res = await safeFetch(`${apiPrefix}/streams/${stream.id}/offers/${offerId}/remove`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expected_revision: stream.revision }),
+        body: JSON.stringify({
+          expected_revision: stream.revision,
+          expected_remote_campaign_id: currentCampaignId,
+        }),
       });
       const updatedStream = await res.json();
       if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка удаления оффера');
       updateStreamInView(updatedStream);
       showToast(`Оффер #${offerId} перемещён в архив черновика`, 'info');
     } catch (err) {
+      if (err && err.isAppUnreachable) {
+        showAppUnreachableNotice();
+      }
       showToast(err.message, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 
-  async function bringBackOffer(stream, offerId) {
+  async function bringBackOffer(stream, offerId, btn = null) {
     clearNotice();
+    if (btn) btn.disabled = true;
     try {
-      const res = await fetch(`/api/streams/${stream.id}/offers/${offerId}/bring-back`, {
+      const res = await safeFetch(`${apiPrefix}/streams/${stream.id}/offers/${offerId}/bring-back`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expected_revision: stream.revision }),
+        body: JSON.stringify({
+          expected_revision: stream.revision,
+          expected_remote_campaign_id: currentCampaignId,
+        }),
       });
       const updatedStream = await res.json();
       if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка возврата оффера');
       updateStreamInView(updatedStream);
       showToast(`Оффер #${offerId} возвращён в активные`, 'info');
     } catch (err) {
+      if (err && err.isAppUnreachable) {
+        showAppUnreachableNotice();
+      }
       showToast(err.message, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 
   async function updateWeight(stream, offerId, share, isPinned) {
     clearNotice();
     try {
-      const res = await fetch(`/api/streams/${stream.id}/offers/${offerId}`, {
+      const res = await safeFetch(`${apiPrefix}/streams/${stream.id}/offers/${offerId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           share: share,
           is_pinned: isPinned,
           expected_revision: stream.revision,
+          expected_remote_campaign_id: currentCampaignId,
         }),
       });
       const updatedStream = await res.json();
@@ -697,40 +828,133 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function cancelStream(stream) {
     clearNotice();
+    const card = document.getElementById(`stream-card-${stream.id}`);
+    const cancelBtn = card ? card.querySelector('.btn-secondary') : null;
+    const pushBtn = card ? card.querySelector('.btn-primary') : null;
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (pushBtn) pushBtn.disabled = true;
+
     try {
-      const res = await fetch(`/api/streams/${stream.id}/cancel`, {
+      const res = await safeFetch(`${apiPrefix}/streams/${stream.id}/cancel`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expected_remote_campaign_id: currentCampaignId,
+        }),
       });
       const updatedStream = await res.json();
       if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка отмены изменений');
       updateStreamInView(updatedStream);
-      showToast('Черновик сброшен до исходного состояния Baseline', 'info');
+      showToast('Черновик восстановлен до последнего синхронизированного состояния', 'info');
+      return true;
     } catch (err) {
       showToast(err.message, 'error');
+      return false;
+    } finally {
+      if (card && card.isConnected) {
+        if (cancelBtn) cancelBtn.disabled = false;
+        if (pushBtn) pushBtn.disabled = false;
+      }
     }
   }
 
   async function pushStream(stream) {
     clearNotice();
+    const card = document.getElementById(`stream-card-${stream.id}`);
+    const pushBtn = card ? card.querySelector('.btn-primary') : null;
+    const cancelBtn = card ? card.querySelector('.btn-secondary') : null;
+    if (pushBtn) pushBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+
     try {
-      const res = await fetch(`/api/streams/${stream.id}/push`, {
+      const res = await safeFetch(`${apiPrefix}/streams/${stream.id}/push`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expected_revision: stream.revision }),
+        body: JSON.stringify({
+          expected_revision: stream.revision,
+          expected_remote_campaign_id: currentCampaignId,
+        }),
       });
       const updatedStream = await res.json();
-      if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка публикации потока');
+      if (!res.ok) {
+        const errMsg = updatedStream.detail || 'Ошибка публикации потока';
+        if (res.status === 502 || res.status === 504 || /network|timeout|connect/i.test(errMsg)) {
+          stream.sync_status = 'unknown';
+          updateStreamInView(stream);
+          showNotice(
+            'Связь прервалась во время публикации. Состояние результата не определено. Нажмите «Проверить результат» для безопасной сверки.',
+            'warning'
+          );
+        }
+        throw new Error(errMsg);
+      }
       updateStreamInView(updatedStream);
-      const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
-      const successMsg = isDemo
-        ? `Поток успешно опубликован в демо-трекер (Flow ID: ${updatedStream.id}) и подтверждён read-back!`
-        : 'Поток успешно опубликован в Keitaro и подтверждён read-back!';
-      showToast(successMsg, 'success');
+      if (updatedStream.sync_status === 'clean') {
+        const isDemo = window.APP_CONFIG && window.APP_CONFIG.is_demo;
+        const successMsg = isDemo
+          ? 'Изменения опубликованы в симуляторе'
+          : 'Изменения опубликованы в Keitaro';
+        showToast(successMsg, 'success');
+      } else if (updatedStream.sync_status === 'unknown') {
+        showToast('Превышено время ожидания. Нажмите «Проверить результат» для сверки.', 'warning');
+        showNotice('Публикация завершилась таймаутом. Требуется сверка состояния потока.', 'warning');
+      } else if (updatedStream.sync_status === 'conflict') {
+        showToast('Обнаружен конфликт с трекером', 'error');
+        showNotice('Обнаружен конфликт: состояние потока в трекере изменилось внешне.', 'conflict');
+      }
+      return true;
     } catch (err) {
+      if (err.isAppUnreachable) {
+        stream.sync_status = 'unknown';
+        updateStreamInView(stream);
+        showNotice(
+          'Связь с приложением прервалась во время публикации. Состояние результата не определено. Проверьте, что сервер запущен, и нажмите «Проверить результат».',
+          'warning'
+        );
+      }
       showToast(err.message, 'error');
-      if (err.message.includes('Conflict')) {
+      if (err.message && err.message.includes('Conflict')) {
         showNotice(err.message, 'conflict');
       }
+      return false;
+    } finally {
+      if (card && card.isConnected) {
+        if (pushBtn && stream.sync_status !== 'unknown') pushBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
+      }
+    }
+  }
+
+  async function reconcileStream(stream) {
+    clearNotice();
+    const card = document.getElementById(`stream-card-${stream.id}`);
+    const btn = card ? card.querySelector('.btn-primary') : null;
+    if (btn) btn.disabled = true;
+
+    try {
+      const res = await safeFetch(`${apiPrefix}/streams/${stream.id}/reconcile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const updatedStream = await res.json();
+      if (!res.ok) throw new Error(updatedStream.detail || 'Ошибка сверки состояния потока');
+      updateStreamInView(updatedStream);
+      if (updatedStream.sync_status === 'clean') {
+        showToast('Сверка завершена: поток синхронизирован с трекером', 'success');
+      } else if (updatedStream.sync_status === 'dirty') {
+        showToast('Сверка завершена: изменения сохранены локально, можно повторить публикацию', 'info');
+      } else if (updatedStream.sync_status === 'conflict') {
+        showToast('Сверка выявила конфликт с трекером', 'warning');
+        showNotice('Конфликт с трекером: удалённое состояние изменилось', 'conflict');
+      } else {
+        showToast(`Статус потока после сверки: ${getStatusText(updatedStream.sync_status, updatedStream.is_managed)}`, 'warning');
+      }
+      return true;
+    } catch (err) {
+      showToast(err.message, 'error');
+      return false;
+    } finally {
+      if (btn && card && card.isConnected) btn.disabled = false;
     }
   }
 
@@ -743,8 +967,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const oldCard = document.getElementById(`stream-card-${updatedStream.id}`);
     if (oldCard) {
+      // Check if active element was inside oldCard to restore focus after replacement
+      let focusedSelector = null;
+      let selectionStart = null;
+      let selectionEnd = null;
+      const activeEl = document.activeElement;
+      if (activeEl && oldCard.contains(activeEl)) {
+        if (activeEl.dataset && activeEl.dataset.offerId && activeEl.dataset.controlRole) {
+          focusedSelector = `[data-offer-id="${activeEl.dataset.offerId}"][data-control-role="${activeEl.dataset.controlRole}"]`;
+          if (activeEl.selectionStart !== undefined) {
+            selectionStart = activeEl.selectionStart;
+            selectionEnd = activeEl.selectionEnd;
+          }
+        }
+      }
+
+      if (oldCard._combobox && typeof oldCard._combobox.destroy === 'function') {
+        oldCard._combobox.destroy();
+      }
       const newCard = createStreamCard(updatedStream);
       oldCard.replaceWith(newCard);
+
+      if (focusedSelector) {
+        const nextEl = newCard.querySelector(focusedSelector);
+        if (nextEl) {
+          nextEl.focus();
+          if (selectionStart !== null && nextEl.setSelectionRange) {
+            try {
+              nextEl.setSelectionRange(selectionStart, selectionEnd);
+            } catch (e) {}
+          }
+        }
+      }
     }
   }
 
@@ -754,115 +1008,24 @@ document.addEventListener('DOMContentLoaded', () => {
     return div.innerHTML;
   }
 
-  // --- Demo Controls Handling (strictly active in demo mode) ---
-  const demoResetBtn = document.getElementById('demoResetBtn');
-  if (demoResetBtn) {
-    demoResetBtn.addEventListener('click', async () => {
-      const ok = confirm(
-        'Сбросить демо-кампании, локальную БД и симулятор к исходному состоянию? Все несохраненные черновики будут удалены.'
-      );
-      if (!ok) return;
-
-      try {
-        demoResetBtn.disabled = true;
-        const res = await fetch('/api/demo/reset', { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Ошибка сброса демо');
-        showToast('Демо-состояние успешно сброшено к исходному seed (34/33/33)!', 'success');
-        clearNotice();
-        await loadCampaigns();
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        demoResetBtn.disabled = false;
+  // Expose state for connection_mode.js dirty & in-flight guards
+  window.EDITOR_STATE = {
+    get currentCampaignData() {
+      return currentCampaignData;
+    },
+    pushAllDirty: async () => {
+      if (!currentCampaignData || !currentCampaignData.streams) return;
+      const dirty = currentCampaignData.streams.filter((s) => s.sync_status === 'dirty');
+      for (const s of dirty) {
+        await pushStream(s);
       }
-    });
-  }
-
-  const demoSimulateDeleteBtn = document.getElementById('demoSimulateDeleteBtn');
-  if (demoSimulateDeleteBtn) {
-    demoSimulateDeleteBtn.addEventListener('click', async () => {
-      if (!currentCampaignData || !currentCampaignData.streams) {
-        showToast('Сначала выберите кампанию с управляемым потоком', 'warning');
-        return;
+    },
+    cancelAllDirty: async () => {
+      if (!currentCampaignData || !currentCampaignData.streams) return;
+      const dirty = currentCampaignData.streams.filter((s) => s.sync_status === 'dirty');
+      for (const s of dirty) {
+        await cancelStream(s);
       }
-
-      const managedStream = currentCampaignData.streams.find((s) => s.is_managed);
-      if (!managedStream) {
-        showToast('В текущей кампании нет управляемого потока', 'warning');
-        return;
-      }
-
-      // Check for offer 105 or last active offer in this stream
-      const activeOffers = managedStream.offers.filter((o) => o.state === 'active');
-      if (activeOffers.length === 0) {
-        showToast('В управляемом потоке нет активных офферов для удаления', 'warning');
-        return;
-      }
-
-      const offer105 = activeOffers.find((o) => o.offer_id === 105);
-      const targetOffer = offer105 || activeOffers[activeOffers.length - 1];
-
-      try {
-        demoSimulateDeleteBtn.disabled = true;
-        const res = await fetch('/api/demo/simulate-delete-stream-offer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            stream_id: managedStream.remote_stream_id,
-            offer_id: targetOffer.offer_id,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Ошибка симуляции удаления');
-
-        showToast(
-          `Привязка оффера ID ${targetOffer.offer_id} удалена из потока в симуляторе!`,
-          'info'
-        );
-        showNotice(
-          `Внимание: В симуляторе из потока Flow 2 удалена привязка оффера ID ${targetOffer.offer_id}. Нажмите «Fetch Streams», чтобы зафиксировать внешнее изменение.`,
-          'warning'
-        );
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        demoSimulateDeleteBtn.disabled = false;
-      }
-    });
-  }
-
-  const demoSimulateDisableBtn = document.getElementById('demoSimulateDisableBtn');
-  let offer105Disabled = false;
-  if (demoSimulateDisableBtn) {
-    demoSimulateDisableBtn.addEventListener('click', async () => {
-      try {
-        demoSimulateDisableBtn.disabled = true;
-        const targetAvailable = offer105Disabled; // toggle
-        const res = await fetch('/api/demo/simulate-disable-global-offer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ offer_id: 105, available: targetAvailable }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Ошибка изменения статуса оффера');
-
-        offer105Disabled = !targetAvailable;
-        if (offer105Disabled) {
-          demoSimulateDisableBtn.textContent = '✅ Восстановить оффер ID 105 в каталоге';
-          showToast(
-            'Оффер ID 105 скрыт в глобальном каталоге симулятора. Теперь при попытке Bring back будет показано объяснение!',
-            'info'
-          );
-        } else {
-          demoSimulateDisableBtn.textContent = '🚫 Скрыть оффер ID 105 в каталоге';
-          showToast('Оффер ID 105 снова доступен в каталоге симулятора.', 'success');
-        }
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        demoSimulateDisableBtn.disabled = false;
-      }
-    });
-  }
+    },
+  };
 });

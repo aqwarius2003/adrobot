@@ -88,6 +88,8 @@ class StreamOfferDTO(BaseModel):
 class StreamDTO(BaseModel):
     id: int
     remote_stream_id: int
+    campaign_id: int | None = None
+    remote_campaign_id: int | None = None
     name: str
     position: int
     is_managed: bool
@@ -126,21 +128,29 @@ class CampaignDetailDTO(BaseModel):
 class AddOfferRequest(BaseModel):
     offer_id: int
     expected_revision: int
+    expected_remote_campaign_id: int | None = None
 
 
 class OfferMutationRequest(BaseModel):
     expected_revision: int
+    expected_remote_campaign_id: int | None = None
 
 
 class UpdateOfferWeightRequest(BaseModel):
     share: int | None = None
     is_pinned: bool | None = None
     expected_revision: int
+    expected_remote_campaign_id: int | None = None
+
+
+class CancelStreamRequest(BaseModel):
+    expected_remote_campaign_id: int | None = None
 
 
 class PushRequest(BaseModel):
     expected_revision: int
     idempotency_key: str | None = None
+    expected_remote_campaign_id: int | None = None
 
 
 class OperationStatusResponse(BaseModel):

@@ -26,6 +26,19 @@ jobs:
         run: |
           echo "CI gate verified: commit is green and eligible for staging deployment."
 
+      - name: Verify CI passed on manual trigger
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Verifying CI check-runs for commit ${{ github.sha }}..."
+          STATUS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs --jq '.check_runs[] | select(.name=="test-and-lint") | .conclusion' || echo "unknown")
+          if [ "$STATUS" != "success" ]; then
+            echo "CI status for commit ${{ github.sha }} is '${STATUS}'. Manual deployment requires a passing CI run."
+            exit 1
+          fi
+          echo "CI verified green for commit ${{ github.sha }}."
+
   publish-image:
     name: Build & Publish Image to GHCR
     runs-on: ubuntu-latest
@@ -37,6 +50,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
@@ -80,6 +95,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Deploy to Staging Environment
         env:

@@ -1,14 +1,16 @@
-import hashlib
-import json
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from src.core.logging import logger
 from src.domain.models import Campaign, Offer, Stream, StreamOffer
 from src.domain.schemas import CampaignDetailDTO, StreamDTO, StreamOfferDTO
-from src.domain.weights import OfferWeightState, calculate_weights
+from src.domain.weights import (
+    OfferWeightState,
+    WeightDistributionError,
+    calculate_weights,
+    compute_stream_fingerprint,
+)
 from src.services.keitaro_client import KeitaroGateway
 
 
@@ -33,29 +35,7 @@ class StreamEditorService:
 
     def _compute_fingerprint(self, stream_data: dict[str, Any]) -> str:
         """Create deterministic SHA256 hash of stream offers and essential routing fields."""
-        offers = stream_data.get("offers") or []
-        normalized_offers = sorted(
-            [
-                {
-                    "offer_id": o.get("offer_id"),
-                    "share": o.get("share"),
-                    "state": o.get("state", "active"),
-                }
-                for o in offers
-            ],
-            key=lambda x: x["offer_id"] or 0,
-        )
-        content = {
-            "type": stream_data.get("type"),
-            "schema": stream_data.get("schema"),
-            "action_type": stream_data.get("action_type"),
-            "action_payload": stream_data.get("action_payload"),
-            "filters": stream_data.get("filters") or [],
-            "landings": stream_data.get("landings") or [],
-            "offers": normalized_offers,
-        }
-        encoded = json.dumps(content, sort_keys=True).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
+        return compute_stream_fingerprint(stream_data)
 
     async def fetch_campaign_streams(self, remote_campaign_id: int) -> CampaignDetailDTO:
         # Check if local campaign exists
@@ -93,154 +73,252 @@ class StreamEditorService:
                 raise EditorConflictError(
                     f"Cannot fetch: stream '{stream.name}' has unpublished local changes or active sync (state='{stream.sync_status}'). Push or Cancel first."
                 )
+        pre_fetch_revisions = {s.id: s.revision for s in existing_streams}
 
-        # Fetch remote streams from Keitaro
+        # 1. Fetch remote streams and collect all needed remote offers into memory BEFORE touching DB
         remote_streams = await self.kt_client.get_campaign_streams(remote_campaign_id)
         now = datetime.now(UTC)
-        campaign.last_sync_at = now
 
+        needed_offer_details: dict[int, dict[str, Any]] = {}
+        for r_stream in remote_streams:
+            for r_off in r_stream.get("offers") or []:
+                off_id = r_off.get("offer_id")
+                if off_id and off_id not in needed_offer_details:
+                    existing_off = self.db.query(Offer).filter_by(remote_offer_id=off_id).first()
+                    if not existing_off:
+                        try:
+                            needed_offer_details[off_id] = await self.kt_client.get_offer(off_id)
+                        except Exception:
+                            needed_offer_details[off_id] = {"name": f"Offer #{off_id}"}
+
+        # 2. Enter atomic DB transaction: check and atomically lock revisions on all streams
+        self.db.expire_all()
+
+        # Check for any new streams added concurrently
+        current_streams = (
+            self.db.query(Stream)
+            .filter_by(campaign_id=campaign.id)
+            .execution_options(populate_existing=True)
+            .all()
+        )
+        if len(current_streams) != len(existing_streams):
+            self.db.rollback()
+            raise EditorConflictError("Concurrent modification: stream count changed during fetch.")
+
+        # Atomic CAS update on all streams: if any stream was modified concurrently (revision changed or dirty),
+        # the SQL UPDATE will return 0 rows affected, guaranteeing atomic rejection.
+        for s_id, expected_rev in pre_fetch_revisions.items():
+            rowcount = (
+                self.db.query(Stream)
+                .filter(
+                    Stream.id == s_id,
+                    Stream.revision == expected_rev,
+                    Stream.sync_status == "clean",
+                )
+                .update({"revision": Stream.revision + 1}, synchronize_session="fetch")
+            )
+            if rowcount == 0:
+                self.db.rollback()
+                raise EditorConflictError(
+                    f"Cannot apply fetch: stream #{s_id} was modified concurrently during remote fetch."
+                )
+
+        campaign.last_sync_at = now
         remote_stream_ids_seen = set()
 
-        for r_stream in remote_streams:
-            r_id = r_stream["id"]
-            remote_stream_ids_seen.add(r_id)
+        try:
+            for r_stream in remote_streams:
+                r_id = r_stream["id"]
+                remote_stream_ids_seen.add(r_id)
 
-            local_stream = (
-                self.db.query(Stream)
-                .filter_by(campaign_id=campaign.id, remote_stream_id=r_id)
-                .first()
-            )
-
-            r_offers = r_stream.get("offers") or []
-            schema = r_stream.get("schema", "redirect")
-
-            # F4: Stream is managed if it currently has offers OR was previously managed with compatible schema
-            is_managed = bool(r_offers) or (
-                local_stream is not None and local_stream.is_managed and schema != "redirect"
-            )
-
-            if not local_stream:
-                local_stream = Stream(
-                    campaign_id=campaign.id,
-                    remote_stream_id=r_id,
-                    name=r_stream.get("name", f"Stream #{r_id}"),
-                    position=r_stream.get("position", 1),
-                    is_managed=is_managed,
-                    stream_type=r_stream.get("type", "regular"),
-                    stream_schema=schema,
-                    action_type=r_stream.get("action_type"),
-                    action_payload=r_stream.get("action_payload"),
-                    sync_status="clean",
-                    remote_fingerprint=self._compute_fingerprint(r_stream),
-                    raw_remote_config=r_stream,
-                    last_sync_at=now,
-                )
-                self.db.add(local_stream)
-                self.db.flush()
-            else:
-                local_stream.name = r_stream.get("name", local_stream.name)
-                local_stream.position = r_stream.get("position", local_stream.position)
-                local_stream.stream_type = r_stream.get("type", local_stream.stream_type)
-                local_stream.stream_schema = schema
-                local_stream.action_type = r_stream.get("action_type", local_stream.action_type)
-                local_stream.action_payload = r_stream.get(
-                    "action_payload", local_stream.action_payload
-                )
-                local_stream.remote_fingerprint = self._compute_fingerprint(r_stream)
-                local_stream.raw_remote_config = r_stream
-                local_stream.last_sync_at = now
-                local_stream.sync_status = "clean"
-                if is_managed:
-                    local_stream.is_managed = True
-
-            if not is_managed:
-                # Opaque stream (e.g. Flow 1 redirect) - no offers processing
-                continue
-
-            # Process offers for managed stream
-            remote_offer_ids_seen = set()
-            for r_off in r_offers:
-                off_id = r_off["offer_id"]
-                remote_offer_ids_seen.add(off_id)
-                share = int(r_off.get("share", 0))
-
-                # Lookup or cache offer
-                local_offer = self.db.query(Offer).filter_by(remote_offer_id=off_id).first()
-                if not local_offer:
-                    try:
-                        off_data = await self.kt_client.get_offer(off_id)
-                        off_name = off_data.get("name", f"Offer #{off_id}")
-                    except Exception:
-                        off_name = f"Offer #{off_id}"
-                    local_offer = Offer(remote_offer_id=off_id, name=off_name, is_available=True)
-                    self.db.add(local_offer)
-                    self.db.flush()
-
-                # Find or create StreamOffer
-                so = (
-                    self.db.query(StreamOffer)
-                    .filter_by(stream_id=local_stream.id, offer_id=local_offer.id)
+                local_stream = (
+                    self.db.query(Stream)
+                    .filter_by(campaign_id=campaign.id, remote_stream_id=r_id)
+                    .execution_options(populate_existing=True)
                     .first()
                 )
-                if not so:
-                    so = StreamOffer(
-                        stream_id=local_stream.id,
-                        offer_id=local_offer.id,
-                        position=len(local_stream.stream_offers) + 1,
-                        baseline_share=share,
-                        baseline_state="active",
-                        baseline_pinned=False,
-                        draft_share=share,
-                        draft_state="active",
-                        draft_pinned=False,
-                        has_been_published=True,
-                    )
-                    self.db.add(so)
+
+                r_offers = r_stream.get("offers") or []
+                schema = r_stream.get("schema", "redirect")
+
+                # Check if any offer has unsupported/disabled state
+                has_disabled_offers = any(
+                    r_off.get("state") in ("disabled", "inactive", "paused", "deleted")
+                    for r_off in r_offers
+                )
+
+                # Determine if stream is managed
+                if schema == "redirect" or has_disabled_offers:
+                    is_managed = False
+                elif local_stream and local_stream.is_managed:
+                    is_managed = True
                 else:
-                    so.baseline_share = share
-                    so.baseline_state = "active"
-                    so.draft_share = share
-                    so.draft_state = "active"
-                    so.archive_reason = None
-                    so.has_been_published = True
+                    is_managed = bool(r_offers) and schema != "redirect" and not has_disabled_offers
 
-            # External deletions check: local offers that disappeared in Keitaro (F4)
-            current_stream_offers = (
-                self.db.query(StreamOffer).filter_by(stream_id=local_stream.id).all()
-            )
-            for so in current_stream_offers:
-                if so.offer.remote_offer_id not in remote_offer_ids_seen:
-                    so.baseline_state = "removed"
-                    so.baseline_share = 0
-                    so.draft_state = "removed"
-                    so.draft_share = 0
-                    so.draft_pinned = False
-                    so.baseline_pinned = False
-                    so.archive_reason = "remote_missing"
-                    logger.info(
-                        "Offer %s in stream %s marked removed due to external deletion in KT",
-                        so.offer.remote_offer_id,
-                        local_stream.id,
+                if not local_stream:
+                    local_stream = Stream(
+                        campaign_id=campaign.id,
+                        remote_stream_id=r_id,
+                        name=r_stream.get("name", f"Stream #{r_id}"),
+                        position=r_stream.get("position", 1),
+                        is_managed=is_managed,
+                        stream_type=r_stream.get("type", "regular"),
+                        stream_schema=schema,
+                        action_type=r_stream.get("action_type"),
+                        action_payload=r_stream.get("action_payload"),
+                        sync_status="unsupported" if has_disabled_offers else "clean",
+                        remote_fingerprint=self._compute_fingerprint(r_stream),
+                        raw_remote_config=r_stream,
+                        last_sync_at=now,
+                        revision=1,
                     )
+                    self.db.add(local_stream)
+                    self.db.flush()
+                else:
+                    local_stream.name = r_stream.get("name", local_stream.name)
+                    local_stream.position = r_stream.get("position", local_stream.position)
+                    local_stream.stream_type = r_stream.get("type", local_stream.stream_type)
+                    local_stream.stream_schema = schema
+                    local_stream.action_type = r_stream.get("action_type", local_stream.action_type)
+                    local_stream.action_payload = r_stream.get(
+                        "action_payload", local_stream.action_payload
+                    )
+                    local_stream.remote_fingerprint = self._compute_fingerprint(r_stream)
+                    local_stream.raw_remote_config = r_stream
+                    local_stream.last_sync_at = now
+                    local_stream.is_managed = is_managed
+                    local_stream.sync_status = "unsupported" if has_disabled_offers else "clean"
 
-        # Check for streams deleted remotely in KT
-        for stream in self.db.query(Stream).filter_by(campaign_id=campaign.id).all():
-            if stream.remote_stream_id not in remote_stream_ids_seen:
-                stream.sync_status = "remote_missing"
+                if not is_managed:
+                    # Opaque stream (e.g. redirect or unsupported states) - archive any existing offers
+                    for so in local_stream.stream_offers:
+                        so.baseline_state = "removed"
+                        so.baseline_share = 0
+                        so.draft_state = "removed"
+                        so.draft_share = 0
+                        so.draft_pinned = False
+                        so.baseline_pinned = False
+                    continue
 
-        self.db.commit()
+                # Process offers for managed stream
+                remote_offer_ids_seen = set()
+                for r_off in r_offers:
+                    off_id = r_off["offer_id"]
+                    remote_offer_ids_seen.add(off_id)
+                    share = int(r_off.get("share", 0))
+
+                    # Lookup or create offer using pre-fetched details
+                    local_offer = self.db.query(Offer).filter_by(remote_offer_id=off_id).first()
+                    if not local_offer:
+                        off_data = needed_offer_details.get(off_id, {})
+                        off_name = off_data.get("name", f"Offer #{off_id}")
+                        local_offer = Offer(
+                            remote_offer_id=off_id, name=off_name, is_available=True
+                        )
+                        self.db.add(local_offer)
+                        self.db.flush()
+
+                    # Find or create StreamOffer
+                    so = (
+                        self.db.query(StreamOffer)
+                        .filter_by(stream_id=local_stream.id, offer_id=local_offer.id)
+                        .first()
+                    )
+                    if not so:
+                        so = StreamOffer(
+                            stream_id=local_stream.id,
+                            offer_id=local_offer.id,
+                            position=len(local_stream.stream_offers) + 1,
+                            baseline_share=share,
+                            baseline_state="active",
+                            baseline_pinned=False,
+                            draft_share=share,
+                            draft_state="active",
+                            draft_pinned=False,
+                            has_been_published=True,
+                        )
+                        self.db.add(so)
+                    else:
+                        so.baseline_share = share
+                        so.baseline_state = "active"
+                        so.draft_share = share
+                        so.draft_state = "active"
+                        so.archive_reason = None
+                        so.has_been_published = True
+
+                # External deletions check: local offers that disappeared in Keitaro (F4)
+                current_stream_offers = (
+                    self.db.query(StreamOffer).filter_by(stream_id=local_stream.id).all()
+                )
+                for so in current_stream_offers:
+                    if so.offer.remote_offer_id not in remote_offer_ids_seen:
+                        so.baseline_state = "removed"
+                        so.baseline_share = 0
+                        so.draft_state = "removed"
+                        so.draft_share = 0
+                        so.draft_pinned = False
+                        so.baseline_pinned = False
+                        so.archive_reason = "remote_missing"
+
+            # Check for streams deleted remotely in KT
+            for stream in self.db.query(Stream).filter_by(campaign_id=campaign.id).all():
+                if stream.remote_stream_id not in remote_stream_ids_seen:
+                    stream.sync_status = "remote_missing"
+
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         # F3: Return fresh query of campaign detail
-        return self.get_campaign_detail(campaign.id)
+        return self.get_campaign_detail_by_local_id(campaign.id)
 
-    def get_campaign_detail(self, campaign_id: int) -> CampaignDetailDTO:
-        campaign = (
-            self.db.query(Campaign)
-            .filter((Campaign.remote_campaign_id == campaign_id) | (Campaign.id == campaign_id))
-            .first()
+    def _build_stream_dto(self, s: Stream) -> StreamDTO:
+        stream_offers = (
+            self.db.query(StreamOffer)
+            .filter_by(stream_id=s.id)
+            .order_by(StreamOffer.position, StreamOffer.offer_id)
+            .all()
         )
-        if not campaign:
-            raise EditorValidationError("Campaign not found")
+        offer_dtos = []
+        for so in stream_offers:
+            offer_dtos.append(
+                StreamOfferDTO(
+                    id=so.id,
+                    offer_id=so.offer.remote_offer_id,
+                    name=so.offer.name,
+                    share=so.draft_share,
+                    is_pinned=so.draft_pinned,
+                    state=so.draft_state,
+                    archive_reason=so.archive_reason,
+                    position=so.position,
+                )
+            )
 
+        remote_camp_id = s.campaign.remote_campaign_id if s.campaign else None
+        if remote_camp_id is None and s.campaign_id:
+            c = self.db.query(Campaign).filter_by(id=s.campaign_id).first()
+            if c:
+                remote_camp_id = c.remote_campaign_id
+
+        return StreamDTO(
+            id=s.id,
+            remote_stream_id=s.remote_stream_id,
+            campaign_id=s.campaign_id,
+            remote_campaign_id=remote_camp_id,
+            name=s.name,
+            position=s.position,
+            is_managed=s.is_managed,
+            stream_type=s.stream_type,
+            stream_schema=s.stream_schema,
+            action_type=s.action_type,
+            action_payload=s.action_payload,
+            sync_status=s.sync_status,
+            revision=s.revision,
+            offers=offer_dtos,
+            last_sync_at=s.last_sync_at,
+        )
+
+    def _build_campaign_detail_dto(self, campaign: Campaign) -> CampaignDetailDTO:
         base_url = getattr(self.kt_client, "base_url", None) or "https://tracker.example"
         tracking_url = (
             f"{campaign.domain_url.rstrip('/')}/{campaign.alias}"
@@ -248,51 +326,10 @@ class StreamEditorService:
             else f"{base_url.rstrip('/')}/{campaign.alias}"
         )
 
-        # F3: Directly query Stream from database instead of stale identity collection
         streams = (
             self.db.query(Stream).filter_by(campaign_id=campaign.id).order_by(Stream.position).all()
         )
-
-        stream_dtos = []
-        for s in streams:
-            stream_offers = (
-                self.db.query(StreamOffer)
-                .filter_by(stream_id=s.id)
-                .order_by(StreamOffer.position, StreamOffer.offer_id)
-                .all()
-            )
-            offer_dtos = []
-            for so in stream_offers:
-                offer_dtos.append(
-                    StreamOfferDTO(
-                        id=so.id,
-                        offer_id=so.offer.remote_offer_id,
-                        name=so.offer.name,
-                        share=so.draft_share,
-                        is_pinned=so.draft_pinned,
-                        state=so.draft_state,
-                        archive_reason=so.archive_reason,
-                        position=so.position,
-                    )
-                )
-
-            stream_dtos.append(
-                StreamDTO(
-                    id=s.id,
-                    remote_stream_id=s.remote_stream_id,
-                    name=s.name,
-                    position=s.position,
-                    is_managed=s.is_managed,
-                    stream_type=s.stream_type,
-                    stream_schema=s.stream_schema,
-                    action_type=s.action_type,
-                    action_payload=s.action_payload,
-                    sync_status=s.sync_status,
-                    revision=s.revision,
-                    offers=offer_dtos,
-                    last_sync_at=s.last_sync_at,
-                )
-            )
+        stream_dtos = [self._build_stream_dto(s) for s in streams]
 
         return CampaignDetailDTO(
             id=campaign.id,
@@ -304,6 +341,32 @@ class StreamEditorService:
             last_sync_at=campaign.last_sync_at,
             streams=stream_dtos,
         )
+
+    def get_campaign_detail_by_remote_id(self, remote_campaign_id: int) -> CampaignDetailDTO:
+        campaign = self.db.query(Campaign).filter_by(remote_campaign_id=remote_campaign_id).first()
+        if not campaign:
+            raise EditorValidationError(f"Campaign with remote ID #{remote_campaign_id} not found")
+        return self._build_campaign_detail_dto(campaign)
+
+    def get_campaign_detail_by_local_id(self, local_campaign_id: int) -> CampaignDetailDTO:
+        campaign = self.db.query(Campaign).filter_by(id=local_campaign_id).first()
+        if not campaign:
+            raise EditorValidationError(f"Campaign with local ID #{local_campaign_id} not found")
+        return self._build_campaign_detail_dto(campaign)
+
+    def get_campaign_detail(self, campaign_id: int) -> CampaignDetailDTO:
+        # Default public method looks up strictly by remote_campaign_id (Keitaro ID)
+        return self.get_campaign_detail_by_remote_id(campaign_id)
+
+    def _verify_stream_campaign_ownership(
+        self, stream: Stream, expected_remote_campaign_id: int | None
+    ) -> None:
+        if expected_remote_campaign_id is not None:
+            campaign = self.db.query(Campaign).filter_by(id=stream.campaign_id).first()
+            if not campaign or campaign.remote_campaign_id != expected_remote_campaign_id:
+                raise EditorValidationError(
+                    f"Stream #{stream.id} does not belong to expected remote campaign #{expected_remote_campaign_id}"
+                )
 
     def _verify_revision_and_state(self, stream: Stream, expected_revision: int) -> None:
         # F5: Lock modifications during in-flight network states
@@ -317,11 +380,18 @@ class StreamEditorService:
                 f"Conflict: stream revision changed (expected {expected_revision}, current {stream.revision}). Reload required."
             )
 
-    async def add_offer(self, stream_id: int, offer_id: int, expected_revision: int) -> StreamDTO:
+    async def add_offer(
+        self,
+        stream_id: int,
+        offer_id: int,
+        expected_revision: int,
+        expected_remote_campaign_id: int | None = None,
+    ) -> StreamDTO:
         stream = self.db.query(Stream).filter_by(id=stream_id).first()
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
 
+        self._verify_stream_campaign_ownership(stream, expected_remote_campaign_id)
         self._verify_revision_and_state(stream, expected_revision)
 
         existing_so = (
@@ -334,7 +404,9 @@ class StreamEditorService:
         if existing_so:
             if existing_so.draft_state == "active":
                 raise EditorValidationError(f"Offer #{offer_id} is already active in this stream")
-            return await self.bring_back_offer(stream_id, offer_id, expected_revision)
+            return await self.bring_back_offer(
+                stream_id, offer_id, expected_revision, expected_remote_campaign_id
+            )
 
         local_offer = self.db.query(Offer).filter_by(remote_offer_id=offer_id).first()
         if not local_offer:
@@ -370,16 +442,20 @@ class StreamEditorService:
         stream.sync_status = "dirty"
         self.db.commit()
 
-        detail = self.get_campaign_detail(stream.campaign_id)
-        return next(s for s in detail.streams if s.id == stream.id)
+        return self._build_stream_dto(stream)
 
     async def remove_offer(
-        self, stream_id: int, offer_id: int, expected_revision: int
+        self,
+        stream_id: int,
+        offer_id: int,
+        expected_revision: int,
+        expected_remote_campaign_id: int | None = None,
     ) -> StreamDTO:
         stream = self.db.query(Stream).filter_by(id=stream_id).first()
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
 
+        self._verify_stream_campaign_ownership(stream, expected_remote_campaign_id)
         self._verify_revision_and_state(stream, expected_revision)
 
         so = (
@@ -405,16 +481,20 @@ class StreamEditorService:
         stream.sync_status = "dirty"
         self.db.commit()
 
-        detail = self.get_campaign_detail(stream.campaign_id)
-        return next(s for s in detail.streams if s.id == stream.id)
+        return self._build_stream_dto(stream)
 
     async def bring_back_offer(
-        self, stream_id: int, offer_id: int, expected_revision: int
+        self,
+        stream_id: int,
+        offer_id: int,
+        expected_revision: int,
+        expected_remote_campaign_id: int | None = None,
     ) -> StreamDTO:
         stream = self.db.query(Stream).filter_by(id=stream_id).first()
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
 
+        self._verify_stream_campaign_ownership(stream, expected_remote_campaign_id)
         self._verify_revision_and_state(stream, expected_revision)
 
         so = (
@@ -453,8 +533,7 @@ class StreamEditorService:
         stream.sync_status = "dirty"
         self.db.commit()
 
-        detail = self.get_campaign_detail(stream.campaign_id)
-        return next(s for s in detail.streams if s.id == stream.id)
+        return self._build_stream_dto(stream)
 
     async def update_offer_weight(
         self,
@@ -463,11 +542,13 @@ class StreamEditorService:
         share: int | None,
         is_pinned: bool | None,
         expected_revision: int,
+        expected_remote_campaign_id: int | None = None,
     ) -> StreamDTO:
         stream = self.db.query(Stream).filter_by(id=stream_id).first()
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
 
+        self._verify_stream_campaign_ownership(stream, expected_remote_campaign_id)
         self._verify_revision_and_state(stream, expected_revision)
 
         so = (
@@ -479,6 +560,9 @@ class StreamEditorService:
         if not so or so.draft_state != "active":
             raise EditorValidationError(f"Active offer #{offer_id} not found in this stream")
 
+        # Distinguish simple pin-only action from changing a share number
+        is_pin_only = (share is None) and (is_pinned is True) and not so.draft_pinned
+
         if share is not None:
             if share < 0 or share > 100:
                 raise EditorValidationError("Share must be an integer between 0 and 100")
@@ -488,18 +572,29 @@ class StreamEditorService:
         if is_pinned is not None:
             so.draft_pinned = is_pinned
 
-        self._recalculate_stream_weights(stream)
+        if is_pin_only:
+            # SPEC §11.2: Simple pin without new share strictly preserves all existing shares.
+            # Only marks the target offer as pinned without rebalancing others.
+            pass
+        else:
+            self._recalculate_stream_weights(stream)
+
         stream.revision += 1
         stream.sync_status = "dirty"
         self.db.commit()
 
-        detail = self.get_campaign_detail(stream.campaign_id)
-        return next(s for s in detail.streams if s.id == stream.id)
+        return self._build_stream_dto(stream)
 
-    def cancel_stream(self, stream_id: int) -> StreamDTO:
+    def cancel_stream(
+        self,
+        stream_id: int,
+        expected_remote_campaign_id: int | None = None,
+    ) -> StreamDTO:
         stream = self.db.query(Stream).filter_by(id=stream_id).first()
         if not stream or not stream.is_managed:
             raise EditorValidationError("Managed stream not found")
+
+        self._verify_stream_campaign_ownership(stream, expected_remote_campaign_id)
 
         if stream.sync_status in ("publishing", "verifying", "unknown"):
             raise EditorConflictError(f"Cannot cancel stream while in '{stream.sync_status}' state")
@@ -523,8 +618,7 @@ class StreamEditorService:
         stream.revision += 1
         self.db.commit()
 
-        detail = self.get_campaign_detail(stream.campaign_id)
-        return next(s for s in detail.streams if s.id == stream.id)
+        return self._build_stream_dto(stream)
 
     def _recalculate_stream_weights(self, stream: Stream) -> None:
         self.db.flush()
@@ -540,7 +634,10 @@ class StreamEditorService:
             for so in stream_offers
         ]
 
-        computed = calculate_weights(states)
+        try:
+            computed = calculate_weights(states)
+        except WeightDistributionError as exc:
+            raise EditorValidationError(str(exc)) from exc
         computed_dict = {c.offer_id: c for c in computed}
 
         for so in stream_offers:

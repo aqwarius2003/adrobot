@@ -1,7 +1,10 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const config = window.APP_CONFIG || {};
+  const currentMode = config.is_demo ? 'demo' : 'real';
+  const apiPrefix = `/api/${currentMode}`;
+  const safeFetch = (window.apiClient && window.apiClient.fetch) || fetch;
   const form = document.getElementById('creatorForm');
   const nameInput = document.getElementById('campaignName');
-  const namePreview = document.getElementById('namePreview');
 
   // GEO elements
   const geoPickerBox = document.getElementById('geoPickerBox');
@@ -11,16 +14,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const geoInputHidden = document.getElementById('campaignGeo');
   const geoError = document.getElementById('geoError');
 
-  // Routing preview elements
-  const routingPreviewBox = document.getElementById('routingPreviewBox');
-  const previewGeoContainer = document.getElementById('previewGeoContainer');
+  // Single selected-offer list inside Flow 2
   const previewOfferText = document.getElementById('previewOfferText');
+  const previewOfferUndo = document.getElementById('previewOfferUndo');
+  const previewRemovedOfferText = document.getElementById('previewRemovedOfferText');
+  const undoPreviewOfferBtn = document.getElementById('undoPreviewOfferBtn');
 
   // Offer Combobox elements
   const offerSearchInput = document.getElementById('offerSearchInput');
   const selectedOfferIdInput = document.getElementById('selectedOfferId');
   const offerDropdown = document.getElementById('offerDropdown');
-  const selectedOffersContainer = document.getElementById('selectedOffersContainer');
+  const offerSummary = document.getElementById('creatorOfferSummary');
 
   // Settings selects
   const domainSelect = document.getElementById('domainSelect');
@@ -41,13 +45,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const copyUrlBtn = document.getElementById('copyUrlBtn');
   const goToEditorLink = document.getElementById('goToEditorLink');
   const createAnotherBtn = document.getElementById('createAnotherBtn');
-
-  // Surname prefix for live name preview
-  let surnamePrefix = 'test_rykov_';
-  if (namePreview && namePreview.textContent) {
-    const match = namePreview.textContent.match(/^(test_[a-z0-9_]+_)/i);
-    if (match) surnamePrefix = match[1].toLowerCase();
-  }
 
   // =========================================================================
   // Country Catalog & State
@@ -77,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       geoError.classList.remove('visible');
       geoError.innerHTML = '';
-      const res = await fetch('/api/geo/countries');
+      const res = await safeFetch(`${apiPrefix}/geo/countries`);
       if (!res.ok) throw new Error('Не удалось загрузить справочник стран');
       countriesCatalog = await res.json();
       countryMap.clear();
@@ -100,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load select options (domains, groups, sources)
   async function loadOptions() {
     try {
-      const res = await fetch('/api/options');
+      const res = await safeFetch(`${apiPrefix}/options`);
       if (!res.ok) throw new Error('Options fetch failed');
       const data = await res.json();
 
@@ -125,17 +122,11 @@ document.addEventListener('DOMContentLoaded', () => {
   loadOptions();
 
   // =========================================================================
-  // Name live preview
+  // Clear the name validation message when the user edits it.
   // =========================================================================
   nameInput.addEventListener('input', () => {
-    const raw = nameInput.value.trim();
-    if (!raw) {
-      namePreview.textContent = `${surnamePrefix}...`;
-    } else if (raw.toLowerCase().startsWith(surnamePrefix)) {
-      namePreview.textContent = raw;
-    } else {
-      namePreview.textContent = `${surnamePrefix}${raw}`;
-    }
+    document.getElementById('nameError').classList.remove('visible');
+    nameInput.removeAttribute('aria-invalid');
   });
 
   // =========================================================================
@@ -147,26 +138,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (selectedCodes.length > 0) {
       geoError.classList.remove('visible');
     }
-  }
-
-  function updateRoutingPreview() {
-    if (!previewGeoContainer) return;
-
-    if (selectedCodes.length === 0) {
-      previewGeoContainer.innerHTML = '<strong id="previewGeoText">Страны не выбраны</strong>';
-      return;
-    }
-
-    const itemsHtml = selectedCodes
-      .map((code) => {
-        const item = countryMap.get(code);
-        const nameRu = item ? item.name_ru : code;
-        const tooltip = `${nameRu} — ${code}`;
-        return `<span class="preview-geo-code" tabindex="0" role="button" aria-label="${escapeHtml(nameRu)} (${code})" data-tooltip="${escapeHtml(tooltip)}">${code}</span>`;
-      })
-      .join(', ');
-
-    previewGeoContainer.innerHTML = `${itemsHtml} &rarr; <code>https://google.com/</code>`;
   }
 
   function renderSelectedTags() {
@@ -210,7 +181,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     updateHiddenGeoInput();
-    updateRoutingPreview();
   }
 
   function addCountry(code) {
@@ -423,6 +393,19 @@ document.addEventListener('DOMContentLoaded', () => {
   function showGeoDropdown() {
     geoDropdown.classList.remove('hidden');
     geoSearchInput.setAttribute('aria-expanded', 'true');
+    positionGeoDropdown();
+  }
+
+  function positionGeoDropdown() {
+    const box = geoPickerBox.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const top = viewport ? viewport.offsetTop : 0;
+    const bottom = top + (viewport ? viewport.height : window.innerHeight);
+    const below = bottom - box.bottom - 12;
+    const above = box.top - top - 12;
+    const dropup = below < 180 && above > below;
+    geoDropdown.classList.toggle('dropup', dropup);
+    geoDropdown.style.maxHeight = `${Math.max(0, Math.min(240, dropup ? above : below))}px`;
   }
 
   function hideGeoDropdown() {
@@ -496,6 +479,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (window.AppTooltip && typeof window.AppTooltip.hide === 'function') {
         window.AppTooltip.hide();
       }
+    } else if (e.key === 'Tab') {
+      hideGeoDropdown();
     } else if (e.key === 'Backspace' && !geoSearchInput.value && selectedCodes.length > 0) {
       // Backspace on empty search input removes last selected tag
       removeCountry(selectedCodes[selectedCodes.length - 1]);
@@ -550,12 +535,18 @@ document.addEventListener('DOMContentLoaded', () => {
       hideGeoDropdown();
     }
   });
+  const repositionGeo = () => {
+    if (!geoDropdown.classList.contains('hidden')) positionGeoDropdown();
+  };
+  window.addEventListener('resize', repositionGeo);
+  document.querySelector('.page-content').addEventListener('scroll', repositionGeo, { passive: true });
+  window.visualViewport?.addEventListener('resize', repositionGeo);
 
   // =========================================================================
   // Offer Combobox Search & Multi-Select
   // =========================================================================
   let selectedOffers = []; // Array of { id: number, name: string }
-  let offerDebounceTimeout = null;
+  let lastRemovedOffer = null;
 
   function calculateOfferShares(count) {
     if (count <= 0) return [];
@@ -570,115 +561,96 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderSelectedOffers() {
-    if (!selectedOffersContainer) return;
-    selectedOffersContainer.innerHTML = '';
     const shares = calculateOfferShares(selectedOffers.length);
-
-    selectedOffers.forEach((off, idx) => {
-      const share = shares[idx];
-      const tag = document.createElement('div');
-      tag.className = 'selected-offer-tag';
-      tag.innerHTML = `
-        <span class="selected-offer-title">[ID: ${off.id}] ${escapeHtml(off.name)}</span>
-        <span class="selected-offer-share">${share}%</span>
-        <button type="button" class="btn-offer-remove" data-id="${off.id}" aria-label="Удалить оффер">&times;</button>
-      `;
-
-      tag.querySelector('.btn-offer-remove').addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        removeOffer(off.id);
-      });
-
-      selectedOffersContainer.appendChild(tag);
-    });
-
-    const flow2ArrowLabel = document.getElementById('flow2ArrowLabel');
+    previewOfferText.replaceChildren();
     if (selectedOffers.length > 0) {
       selectedOfferIdInput.value = selectedOffers.map((o) => o.id).join(',');
       document.getElementById('offerError').classList.remove('visible');
 
-      if (selectedOffers.length === 1) {
-        if (flow2ArrowLabel) flow2ArrowLabel.innerHTML = '&darr; Оффер · 100%';
-        previewOfferText.textContent = `[ID: ${selectedOffers[0].id}] ${selectedOffers[0].name} (100%)`;
-      } else {
-        if (flow2ArrowLabel) flow2ArrowLabel.innerHTML = '&darr; Офферы · суммарно 100%';
-        const parts = selectedOffers.map((o, idx) => `[ID: ${o.id}] ${o.name} (${shares[idx]}%)`);
-        previewOfferText.textContent = parts.join(', ');
-      }
+      selectedOffers.forEach((offer, index) => {
+        const row = document.createElement('div');
+        row.className = 'creator-preview-offer';
+        row.setAttribute('role', 'listitem');
+
+        const details = document.createElement('div');
+        const name = document.createElement('span');
+        name.className = 'creator-preview-offer-name';
+        name.textContent = offer.name;
+        const id = document.createElement('small');
+        id.className = 'creator-preview-offer-id';
+        id.textContent = `ID: ${offer.id}`;
+        details.append(name, id);
+
+        const share = document.createElement('strong');
+        share.className = 'creator-preview-offer-share';
+        share.textContent = `${shares[index]}%`;
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn btn-secondary btn-sm';
+        remove.textContent = 'Убрать';
+        remove.setAttribute('aria-label', `Убрать из формы ${offer.name}`);
+        remove.addEventListener('click', () => removeOffer(offer.id));
+        row.append(details, share, remove);
+        previewOfferText.appendChild(row);
+      });
     } else {
-      if (flow2ArrowLabel) flow2ArrowLabel.innerHTML = '&darr; Оффер · 100%';
       selectedOfferIdInput.value = '';
-      previewOfferText.textContent = 'Оффер не выбран';
+      previewOfferText.textContent = 'Офферы не выбраны';
     }
+    offerSummary.textContent = `Активных: ${selectedOffers.length} · Итого: ${shares.reduce((sum, share) => sum + share, 0)}%`;
+    previewOfferUndo.classList.toggle('hidden', !lastRemovedOffer);
+    previewRemovedOfferText.textContent = lastRemovedOffer
+      ? `Убран из формы: ${lastRemovedOffer.offer.name}`
+      : '';
   }
 
   function selectOffer(id, name) {
     const numId = parseInt(id, 10);
     if (!numId) return;
     if (!selectedOffers.some((o) => o.id === numId)) {
+      if (lastRemovedOffer && lastRemovedOffer.offer.id === numId) lastRemovedOffer = null;
       selectedOffers.push({ id: numId, name: name });
       renderSelectedOffers();
     }
-    offerSearchInput.value = '';
-    offerDropdown.classList.add('hidden');
+    offerCombobox.reset();
     offerSearchInput.focus();
   }
 
   function removeOffer(id) {
     const numId = parseInt(id, 10);
-    selectedOffers = selectedOffers.filter((o) => o.id !== numId);
+    const position = selectedOffers.findIndex((offer) => offer.id === numId);
+    if (position < 0) return;
+    lastRemovedOffer = { offer: selectedOffers[position], position };
+    selectedOffers.splice(position, 1);
     renderSelectedOffers();
+    undoPreviewOfferBtn.focus();
   }
 
-  offerSearchInput.addEventListener('input', () => {
-    clearTimeout(offerDebounceTimeout);
-    const query = offerSearchInput.value.trim();
-    if (query.length < 1) {
-      offerDropdown.classList.add('hidden');
-      return;
-    }
-    offerDebounceTimeout = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/offers?search=${encodeURIComponent(query)}`);
-        if (!res.ok) throw new Error('Search failed');
-        const offers = await res.json();
-        renderOfferDropdown(offers);
-      } catch (err) {
-        console.error('Offer search error:', err);
-      }
-    }, 250);
+  undoPreviewOfferBtn.addEventListener('click', () => {
+    if (!lastRemovedOffer) return;
+    const { offer, position } = lastRemovedOffer;
+    lastRemovedOffer = null;
+    selectedOffers.splice(position, 0, offer);
+    renderSelectedOffers();
+    offerSearchInput.focus();
   });
 
-  function renderOfferDropdown(offers) {
-    if (!offers || offers.length === 0) {
-      offerDropdown.innerHTML = '<div class="dropdown-item">Ничего не найдено</div>';
-      offerDropdown.classList.remove('hidden');
-      return;
-    }
-    offerDropdown.innerHTML = offers
-      .map(
-        (o) =>
-          `<div class="dropdown-item" data-id="${o.id}" data-name="${escapeHtml(o.name)}">[ID: ${o.id}] ${escapeHtml(o.name)}</div>`
-      )
-      .join('');
-    offerDropdown.classList.remove('hidden');
-
-    offerDropdown.querySelectorAll('.dropdown-item').forEach((el) => {
-      el.addEventListener('click', () => {
-        const id = el.getAttribute('data-id');
-        const name = el.getAttribute('data-name');
-        if (id) {
-          selectOffer(id, name);
-        }
-      });
-    });
-  }
-
-  document.addEventListener('click', (e) => {
-    if (!offerSearchInput.contains(e.target) && !offerDropdown.contains(e.target)) {
-      offerDropdown.classList.add('hidden');
-    }
+  const offerCombobox = new OfferCombobox({
+    input: offerSearchInput,
+    dropdown: offerDropdown,
+    cardElement: form.closest('.card'),
+    getExcludedOfferIds: () => new Set(selectedOffers.map((offer) => offer.id)),
+    searchFn: async (query) => {
+      const res = await safeFetch(`${apiPrefix}/offers?search=${encodeURIComponent(query)}`);
+      if (!res.ok) throw new Error('Не удалось загрузить офферы');
+      return res.json();
+    },
+    onSelect: (offer) => selectOffer(offer.id, offer.name),
+  });
+  // Enter belongs to the combobox even when results are empty or still loading.
+  offerSearchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') event.preventDefault();
   });
 
   // =========================================================================
@@ -689,6 +661,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Reset errors
     document.getElementById('nameError').classList.remove('visible');
+    nameInput.removeAttribute('aria-invalid');
     geoError.classList.remove('visible');
     document.getElementById('offerError').classList.remove('visible');
 
@@ -727,7 +700,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Send creation request
     submitBtn.disabled = true;
     submitSpinner.classList.remove('hidden');
-    submitBtnText.textContent = 'Создание в Keitaro...';
+    submitBtnText.textContent = config.is_demo ? 'Создание в симуляторе...' : 'Создание в Keitaro...';
 
     const payload = {
       name: name,
@@ -740,7 +713,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     try {
-      const res = await fetch('/api/campaigns', {
+      const res = await safeFetch(`${apiPrefix}/campaigns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -748,11 +721,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 409 && data.code === 'campaign_name_exists') {
+          const error = document.getElementById('nameError');
+          error.textContent = data.detail;
+          error.classList.add('visible');
+          nameInput.setAttribute('aria-invalid', 'true');
+          nameInput.focus();
+          nameInput.select();
+          return;
+        }
         throw new Error(data.detail || 'Ошибка создания кампании');
       }
 
       // Display result
-      routingPreviewBox.classList.add('hidden');
+      form.classList.add('hidden');
       creationResultBox.classList.remove('hidden');
 
       resultCampaignId.textContent = data.remote_campaign_id;
@@ -764,7 +746,8 @@ document.addEventListener('DOMContentLoaded', () => {
         data.verification_status === 'verified'
           ? (isDemo ? 'Подтверждено в демо' : 'Подтверждено KT')
           : data.verification_status;
-      goToEditorLink.href = `/editor?campaign_id=${data.remote_campaign_id}`;
+      goToEditorLink.href = `/${currentMode}/editor?campaign_id=${data.remote_campaign_id}`;
+      creationResultBox.focus();
 
       showToast(
         isDemo
@@ -792,7 +775,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Create another campaign button
   createAnotherBtn.addEventListener('click', () => {
     creationResultBox.classList.add('hidden');
-    routingPreviewBox.classList.remove('hidden');
+    form.classList.remove('hidden');
     form.reset();
 
     // Reset GEO picker
@@ -804,11 +787,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Reset Offers
     selectedOffers = [];
+    lastRemovedOffer = null;
+    offerCombobox.reset();
     renderSelectedOffers();
     document.getElementById('offerError').classList.remove('visible');
 
-    // Reset previews
-    namePreview.textContent = `${surnamePrefix}...`;
-    previewOfferText.textContent = 'Оффер не выбран';
+    document.getElementById('nameError').classList.remove('visible');
+    nameInput.removeAttribute('aria-invalid');
+    nameInput.focus();
   });
 });

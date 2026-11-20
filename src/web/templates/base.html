@@ -25,21 +25,29 @@
         <button class="mobile-toggle" id="mobileMenuClose" aria-label="Закрыть меню">&times;</button>
       </div>
       <nav class="sidebar-nav">
-        {% if is_demo %}
-        <a href="/creator" class="nav-item {% if active_page == 'creator' %}active{% endif %}">
+        <a href="/{{ current_mode }}/creator" class="nav-item {% if active_page == 'creator' %}active{% endif %}">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 5v14M5 12h14" />
           </svg>
           <span>Создание кампании</span>
         </a>
-        {% endif %}
-        <a href="/editor" class="nav-item {% if active_page == 'editor' %}active{% endif %}">
+        <a href="/{{ current_mode }}/editor" class="nav-item {% if active_page == 'editor' %}active{% endif %}">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
           </svg>
-          <span>Редактор кампаний</span>
+          <span>Редактор ADROBOT</span>
         </a>
+        {% if has_simulator_tab %}
+        <a href="/demo/simulator" class="nav-item {% if active_page == 'simulator' %}active{% endif %}" data-tooltip="Здесь можно добавлять и убирать офферы в симуляторе Keitaro. После сохранения перейдите в редактор ADROBOT и нажмите Fetch Streams. Настоящий Keitaro не изменяется.">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+          </svg>
+          <span>Keitaro — симулятор</span>
+        </a>
+        {% endif %}
       </nav>
       <div class="sidebar-footer">
         <div class="env-info">
@@ -54,7 +62,7 @@
       <!-- Topbar -->
       <header class="app-topbar">
         <div class="topbar-left">
-          <button class="menu-btn" id="mobileMenuOpen" aria-label="Открыть меню">
+          <button class="menu-btn" id="mobileMenuOpen" aria-label="Открыть меню" aria-controls="appSidebar" aria-expanded="false">
             <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none">
               <line x1="3" y1="12" x2="21" y2="12"></line>
               <line x1="3" y1="6" x2="21" y2="6"></line>
@@ -64,28 +72,30 @@
           <h1 class="page-title">{% block page_title %}Campaign Manager{% endblock %}</h1>
         </div>
         <div class="topbar-right">
+          <!-- Persistent Tracker Connection Badge (DESIGN §2) -->
           {% if is_demo %}
-          <div class="demo-badge" data-tooltip="Режим демонстрации на симуляторе Keitaro. Все операции изолированы от реального трекера.">
+          <div class="demo-badge" id="connectionModeBadge" data-tooltip="Режим демонстрации на симуляторе Keitaro. Все операции изолированы от реального трекера.">
             <span class="demo-badge-dot"></span>
-            <span class="demo-badge-text">Демо · данные симулятора</span>
+            <span class="demo-badge-text">Демо · симулятор</span>
           </div>
-          {% if real_app_url %}
-          <a href="{{ real_app_url }}" class="btn btn-outline-secondary btn-sm mode-switch-btn" title="Перейти к рабочему экземпляру Keitaro">
-            Вернуться к Keitaro &rarr;
-          </a>
-          {% endif %}
           {% else %}
-          <div class="status-indicator" id="ktConnectionStatus" data-tooltip="Рабочий режим. Прямое подключение к трекеру Keitaro.">
-            <span
-              class="status-dot {% if keitaro_configured %}dot-configured{% else %}dot-unverified{% endif %}"></span>
-            <span class="status-text">Keitaro · рабочий режим</span>
+          <div class="status-indicator" id="connectionModeBadge" data-tooltip="Рабочий режим. Прямое подключение к трекеру Keitaro.">
+            <span class="status-dot {% if keitaro_configured %}dot-configured{% else %}dot-unverified{% endif %}"></span>
+            <span class="status-text">Подключение: Keitaro</span>
           </div>
-          {% if demo_app_url %}
-          <a href="{{ demo_app_url }}" class="btn btn-outline-primary btn-sm mode-switch-btn" title="Перейти к демонстрационному экземпляру с симулятором">
-            Открыть демо &rarr;
-          </a>
           {% endif %}
-          {% endif %}
+
+          <!-- Mode Switcher in Header (Keitaro / Демо) -->
+          <div class="mode-switch-container">
+            <div class="mode-switcher-group" id="modeSwitcherGroup" role="group" aria-label="Keitaro / Демо" title="Keitaro / Демо">
+              <button type="button" class="mode-btn {% if not is_demo %}active{% endif %}" id="modeBtnReal" data-mode="real" title="Переключиться на рабочий трекер Keitaro">
+                Keitaro
+              </button>
+              <button type="button" class="mode-btn {% if is_demo %}active{% endif %}" id="modeBtnDemo" data-mode="demo" title="Переключиться на демо-симулятор">
+                Демо
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -98,42 +108,41 @@
 
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-  <script>
-    // Responsive sidebar toggle
-    const menuOpen = document.getElementById('mobileMenuOpen');
-    const menuClose = document.getElementById('mobileMenuClose');
-    const sidebar = document.getElementById('appSidebar');
+  <!-- Mode Switch Confirmation Modal -->
+  <div id="modeSwitchModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalTitle">Неопубликованные изменения</h3>
+      </div>
+      <div class="modal-body">
+        <p id="modeSwitchModalDesc">В текущем редакторе есть несохранённые локальные изменения потоков. Выберите действие перед переключением режима:</p>
+        <div id="modeSwitchAffectedStreams" class="affected-streams-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="modalPublishAndSwitchBtn" class="btn btn-primary">Опубликовать и переключить</button>
+        <button type="button" id="modalCancelAndSwitchBtn" class="btn btn-outline-danger">Отменить изменения и переключить</button>
+        <button type="button" id="modalStayBtn" class="btn btn-secondary">Остаться</button>
+      </div>
+    </div>
+  </div>
 
-    if (menuOpen && sidebar) {
-      menuOpen.addEventListener('click', () => sidebar.classList.add('open'));
+  <!-- Safe JSON Application Configuration for CSP Compliance -->
+  <script type="application/json" id="appConfigData">
+    {
+      "is_demo": {{ 'true' if is_demo else 'false' }},
+      "current_mode": {{ (current_mode or '') | tojson }},
+      "api_prefix": {{ (api_prefix or '') | tojson }},
+      "surname": {{ (surname or '') | tojson }},
+      "keitaro_base_url": {{ (keitaro_base_url or '') | tojson }},
+      "csrf_token": {{ (csrf_token or '') | tojson }}
     }
-    if (menuClose && sidebar) {
-      menuClose.addEventListener('click', () => sidebar.classList.remove('open'));
-    }
-
-    // Global Toast Helper
-    function showToast(message, type = 'info') {
-      const container = document.getElementById('toastContainer');
-      if (!container) return;
-      const toast = document.createElement('div');
-      toast.className = `toast toast-${type}`;
-      toast.textContent = message;
-      container.appendChild(toast);
-      setTimeout(() => {
-        toast.classList.add('fade-out');
-        setTimeout(() => toast.remove(), 300);
-      }, 4000);
-    }
-
-    // Global application configuration
-    window.APP_CONFIG = {
-      is_demo: {{ 'true' if is_demo else 'false' }},
-      kt_mode: "{{ kt_mode }}",
-      surname: "{{ surname }}",
-      keitaro_base_url: "{{ keitaro_base_url or '' }}"
-    };
   </script>
+
+  <script src="/static/js/errors.js"></script>
+  <script src="/static/js/api_client.js"></script>
+  <script src="/static/js/app_init.js"></script>
   <script src="/static/js/tooltip.js"></script>
+  <script src="/static/js/connection_mode.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 

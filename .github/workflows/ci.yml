@@ -55,7 +55,13 @@ jobs:
 
       - name: Run frontend unit tests
         run: |
+          node tests/test_frontend_api_client.js
           node tests/test_frontend_geo.js
+          node tests/test_frontend_combobox.js
+          node tests/test_frontend_errors.js
+          node tests/test_frontend_simulator.js
+          node tests/test_frontend_view_in_kt.js
+          node tests/test_frontend_weight_controls.js
 
   docker-build-and-smoke:
     name: Docker Build & Runner Smoke Test

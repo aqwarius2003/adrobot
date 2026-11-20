@@ -116,3 +116,73 @@ async def demo_simulate_disable_global_offer(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Could not connect to simulator at {sim_url}: {exc}",
         ) from exc
+
+
+# ==============================================================================
+# Simulator Tab Same-Origin API (DEMO_MODE_TASK §5)
+# ==============================================================================
+
+
+class UpdateSimulatorStreamOffersPayload(BaseModel):
+    offers: list[dict[str, Any]]
+    expected_fingerprint: str | None = None
+
+
+@router.get("/simulator/campaigns")
+async def get_simulator_campaigns():
+    from src.services.demo_admin_service import DemoAdminService
+
+    service = DemoAdminService()
+    try:
+        return await service.get_campaigns()
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.get("/simulator/campaigns/{campaign_id}/streams")
+async def get_simulator_campaign_streams(campaign_id: int):
+    from src.services.demo_admin_service import DemoAdminService
+
+    service = DemoAdminService()
+    try:
+        return await service.get_campaign_streams(campaign_id)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.get("/simulator/offers")
+async def get_simulator_offers(search: str = ""):
+    from src.services.demo_admin_service import DemoAdminService
+
+    service = DemoAdminService()
+    try:
+        return await service.get_offers(search=search)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.put("/simulator/campaigns/{campaign_id}/streams/{stream_id}/offers")
+async def save_simulator_stream_offers(
+    campaign_id: int, stream_id: int, payload: UpdateSimulatorStreamOffersPayload
+):
+    from src.services.demo_admin_service import DemoAdminConflictError, DemoAdminService
+
+    service = DemoAdminService()
+    try:
+        return await service.save_stream_offers(
+            campaign_id=campaign_id,
+            stream_id=stream_id,
+            offers=payload.offers,
+            expected_fingerprint=payload.expected_fingerprint,
+        )
+    except DemoAdminConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        try:
+            err_data = exc.response.json()
+            err_detail = err_data.get("detail", exc.response.text)
+        except Exception:
+            err_detail = exc.response.text
+        raise HTTPException(status_code=exc.response.status_code, detail=err_detail) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

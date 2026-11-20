@@ -6,6 +6,11 @@ from sqlalchemy.orm import Session
 
 from src.core.config import settings
 from src.core.logging import logger
+from src.domain.campaign_names import (
+    CampaignNameConflictError,
+    campaign_name_key,
+    normalize_campaign_name,
+)
 from src.domain.iso_countries import is_valid_iso_country
 from src.domain.models import Campaign, Offer, Operation, Stream, StreamOffer
 from src.domain.schemas import CampaignCreateRequest, CampaignCreateResponse
@@ -21,12 +26,7 @@ class CampaignCreatorService:
         self.kt_client = kt_client
 
     def normalize_campaign_name(self, raw_name: str) -> str:
-        surname = settings.CAMPAIGN_SURNAME.strip().lower()
-        expected_prefix = f"test_{surname}_"
-        clean = raw_name.strip()
-        if not clean.lower().startswith(expected_prefix):
-            return f"{expected_prefix}{clean}"
-        return clean
+        return normalize_campaign_name(raw_name)
 
     def normalize_geo(self, raw_geo: str) -> list[str]:
         if not raw_geo or not raw_geo.strip():
@@ -52,7 +52,7 @@ class CampaignCreatorService:
         return unique_codes
 
     def generate_alias(self, normalized_name: str) -> str:
-        slug = re.sub(r"[^a-zA-Z0-9]+", "-", normalized_name.lower()).strip("-")
+        slug = re.sub(r"[^a-zA-Z0-9]+", "-", normalized_name.lower()).strip("-") or "campaign"
         suffix = uuid.uuid4().hex[:6]
         return f"{slug}-{suffix}"
 
@@ -147,7 +147,8 @@ class CampaignCreatorService:
                 return CampaignCreateResponse(
                     id=op.target_id or 0,
                     remote_campaign_id=remote_ids.get("campaign_id", 0),
-                    name=request.name,
+                    name=(op.candidate_payload or {}).get("normalized_name")
+                    or self.normalize_campaign_name(request.name),
                     alias=remote_ids.get("alias", ""),
                     tracking_url=remote_ids.get("tracking_url"),
                     flow1_stream_id=remote_ids.get("flow1_id"),
@@ -159,6 +160,24 @@ class CampaignCreatorService:
 
         normalized_name = self.normalize_campaign_name(request.name)
         geo_codes = self.normalize_geo(request.geo)
+
+        # Check fresh upstream state before any write. A retry may refer to its own
+        # already-created campaign, identified by the operation's saved ID or alias.
+        try:
+            existing_campaigns = await self.kt_client.get_campaigns()
+        except Exception as exc:
+            raise KeitaroApiError(
+                "Не удалось проверить название кампании. Повторите попытку позже."
+            ) from exc
+        own_remote_id = (op.remote_ids or {}).get("campaign_id") if op else None
+        own_alias = (op.candidate_payload or {}).get("alias") if op else None
+        for campaign in existing_campaigns:
+            if own_remote_id is not None and campaign.get("id") == own_remote_id:
+                continue
+            if own_alias and campaign.get("alias") == own_alias:
+                continue
+            if campaign_name_key(campaign.get("name")) == campaign_name_key(normalized_name):
+                raise CampaignNameConflictError()
 
         if not op:
             alias = self.generate_alias(normalized_name)
@@ -250,20 +269,16 @@ class CampaignCreatorService:
             op.stage = "creating_campaign"
             self.db.commit()
 
-            # F7: check if campaign with this name/alias already exists (e.g. timeout on prior attempt)
-            try:
-                existing_campaigns = await self.kt_client.get_campaigns()
-                for c in existing_campaigns:
-                    if c.get("name") == normalized_name or c.get("alias") == alias:
-                        remote_campaign_id = c["id"]
-                        logger.info(
-                            "Found existing campaign %s for %s after retry",
-                            remote_campaign_id,
-                            normalized_name,
-                        )
-                        break
-            except Exception as exc:
-                logger.warning("Could not check existing campaigns: %s", exc)
+            # A matching saved alias recovers a previous attempt without creating twice.
+            for c in existing_campaigns:
+                if c.get("alias") == alias:
+                    remote_campaign_id = c["id"]
+                    logger.info(
+                        "Found existing campaign %s for alias %s after retry",
+                        remote_campaign_id,
+                        alias,
+                    )
+                    break
 
             if not remote_campaign_id:
                 campaign_payload: dict[str, Any] = {
@@ -286,6 +301,12 @@ class CampaignCreatorService:
                     op.status = "failed"
                     op.error_message = f"Failed to create campaign in Keitaro: {exc}"
                     self.db.commit()
+                    if (
+                        isinstance(exc, KeitaroApiError)
+                        and exc.status_code == 409
+                        and "campaign_name_exists" in str(exc.response_body)
+                    ):
+                        raise CampaignNameConflictError() from exc
                     raise KeitaroApiError(f"Failed to create campaign in Keitaro: {exc}") from exc
 
             # Save confirmed campaign_id immediately (F6)
@@ -293,6 +314,35 @@ class CampaignCreatorService:
             remote_ids["alias"] = alias
             op.remote_ids = remote_ids
             self.db.commit()
+
+        # Check if streams already exist for this campaign to prevent duplicate flows
+        if remote_campaign_id and (
+            not remote_ids.get("flow1_id") or not remote_ids.get("flow2_id")
+        ):
+            try:
+                existing_streams = await self.kt_client.get_campaign_streams(remote_campaign_id)
+                for s in existing_streams:
+                    if (
+                        s.get("type") == "regular"
+                        and s.get("name") == "Flow 1"
+                        and not remote_ids.get("flow1_id")
+                    ):
+                        remote_ids["flow1_id"] = s.get("id")
+                    elif (
+                        s.get("type") == "default"
+                        and s.get("name") == "Flow 2"
+                        and not remote_ids.get("flow2_id")
+                    ):
+                        remote_ids["flow2_id"] = s.get("id")
+                if "flow1_id" in remote_ids or "flow2_id" in remote_ids:
+                    op.remote_ids = remote_ids
+                    self.db.commit()
+            except Exception as exc:
+                logger.warning(
+                    "Could not check existing streams for campaign %s: %s",
+                    remote_campaign_id,
+                    exc,
+                )
 
         # Step 4: Create Flow 1 (GEO -> Google redirect)
         flow1_id = remote_ids.get("flow1_id")

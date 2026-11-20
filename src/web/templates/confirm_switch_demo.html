@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Переход в демо — ADROBOT</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    .confirm-container {
+      max-width: 480px;
+      margin: 100px auto;
+      padding: 32px;
+      background: var(--bg-card, #ffffff);
+      border: 1px solid var(--border-color, #e2e8f0);
+      border-radius: 8px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+      text-align: center;
+    }
+    .confirm-container h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 12px;
+    }
+    .confirm-container p {
+      font-size: 14px;
+      color: #64748b;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .confirm-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+  </style>
+</head>
+<body style="background: var(--bg-main, #f8fafc);">
+  <div class="confirm-container">
+    <h1>Переход в демонстрационный режим</h1>
+    <p>У вас активна сессия работы с настоящим Keitaro.<br>Переход в демо завершит текущую боевую сессию на сервере.</p>
+    <div class="confirm-actions">
+      <form method="POST" action="/api/auth/switch-mode">
+        <input type="hidden" name="mode" value="demo">
+        <button type="button" id="confirmSwitchBtn" class="btn btn-primary" style="padding: 10px 20px;">
+          Перейти в демо
+        </button>
+      </form>
+      <a href="/real/editor" class="btn btn-secondary" style="padding: 10px 20px; text-decoration: none;">
+        Остаться в Keitaro
+      </a>
+    </div>
+  </div>
+  <!-- Safe JSON Data for CSP Compliance -->
+  <script type="application/json" id="confirmData">
+    {
+      "csrf_token": {{ (csrf_token or '') | tojson }},
+      "target_url": {{ (target_url or '') | tojson }}
+    }
+  </script>
+  <script src="/static/js/api_client.js"></script>
+  <script src="/static/js/confirm_switch_demo.js"></script>
+</body>
+</html>

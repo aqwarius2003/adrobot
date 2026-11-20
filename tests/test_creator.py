@@ -121,8 +121,13 @@ def client(mock_kt, monkeypatch):
     app.dependency_overrides.clear()
 
 
-def test_creator_rejected_in_real_mode(client: TestClient, monkeypatch):
+def test_creator_accepts_authenticated_real_mode(client: TestClient, monkeypatch):
     monkeypatch.setattr(settings, "KT_MODE", "real")
+    from src.core.security import generate_csrf_token, get_security_store, hash_token
+
+    token = get_security_store().create_session()
+    csrf = generate_csrf_token(hash_token(token))
+    client.cookies.set("adrobot_session", token)
     payload = {
         "name": "summer_promo",
         "geo": "AU,RO",
@@ -131,9 +136,9 @@ def test_creator_rejected_in_real_mode(client: TestClient, monkeypatch):
         "group_id": "201",
         "traffic_source_id": 301,
     }
-    response = client.post("/api/campaigns", json=payload)
-    assert response.status_code == 403
-    assert "creator_unavailable_in_real_mode" in response.json()["detail"]
+    response = client.post("/api/campaigns", json=payload, headers={"X-CSRF-Token": csrf})
+    assert response.status_code == 201
+    assert response.json()["name"] == "summer_promo"
 
 
 def test_creator_success_creates_two_flows(client: TestClient, mock_kt: MockKeitaroClient):
@@ -151,9 +156,7 @@ def test_creator_success_creates_two_flows(client: TestClient, mock_kt: MockKeit
     data = response.json()
 
     assert data["remote_campaign_id"] == 9001
-    # Check surname prefix
-    assert data["name"].startswith(f"test_{settings.CAMPAIGN_SURNAME.lower()}_")
-    assert "summer_promo" in data["name"]
+    assert data["name"] == "summer_promo"
     assert data["verification_status"] == "verified"
     assert data["flow1_stream_id"] is not None
     assert data["flow2_stream_id"] is not None
