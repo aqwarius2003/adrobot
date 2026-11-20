@@ -34,7 +34,7 @@ class MockKeitaroEditorClient(KeitaroGateway):
     def __init__(self):
         self.base_url = "https://tracker.example"
         self.campaigns = {
-            100: {"id": 100, "name": "test_novikov_demo", "alias": "demo-camp"},
+            100: {"id": 100, "name": "test_rykov_demo", "alias": "demo-camp"},
         }
         self.streams = {
             1001: {

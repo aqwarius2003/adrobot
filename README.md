@@ -195,7 +195,7 @@ DEMO_APP_URL=http://localhost:8002
 | `DEMO_SIMULATOR_URL` | URL симулятора в демо-режиме | `http://127.0.0.1:8001` |
 | `KEITARO_BASE_URL` | Базовый URL Keitaro (для `KT_MODE=real`, без `/admin_api/v1`) | `https://tracker.example` |
 | `KEITARO_API_KEY` | Ключ доступа Keitaro Admin API | *пусто* |
-| `CAMPAIGN_SURNAME` | Фамилия для обязательного префикса `test_<фамилия>_` | `novikov` |
+| `CAMPAIGN_SURNAME` | Фамилия для обязательного префикса `test_<фамилия>_` | `rykov` |
 | `DEFAULT_DOMAIN_ID` | Опциональный ID домена по умолчанию | *пусто* |
 | `DEFAULT_GROUP_ID` | Опциональный ID группы кампаний | *пусто* |
 | `DEFAULT_TRAFFIC_SOURCE_ID` | Опциональный ID источника трафика | *пусто* |

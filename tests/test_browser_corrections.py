@@ -34,7 +34,7 @@ def override_get_db():
 class MockBrowserKeitaro(KeitaroGateway):
     def __init__(self):
         self.campaigns = {
-            1: {"id": 1, "name": "test_novikov_demo_flow", "alias": "demo-flow"},
+            1: {"id": 1, "name": "test_rykov_demo_flow", "alias": "demo-flow"},
         }
         self.streams = {
             10: {
@@ -211,16 +211,16 @@ def test_simulator_persistence_across_restarts(tmp_path):
     state_file = str(tmp_path / "sim_state.json")
 
     # Instance 1: Create storage and mutate
-    sim1 = SimulatorStorage(surname="novikov", state_file=state_file)
+    sim1 = SimulatorStorage(surname="rykov", state_file=state_file)
     assert len(sim1.campaigns) == 1
-    new_camp = sim1.create_campaign({"name": "test_novikov_persisted", "alias": "persisted"})
+    new_camp = sim1.create_campaign({"name": "test_rykov_persisted", "alias": "persisted"})
     camp_id = new_camp["id"]
     assert os.path.exists(state_file)
 
     # Instance 2: Start new simulator instance on the same file (restart simulation)
-    sim2 = SimulatorStorage(surname="novikov", state_file=state_file)
+    sim2 = SimulatorStorage(surname="rykov", state_file=state_file)
     assert camp_id in sim2.campaigns
-    assert sim2.campaigns[camp_id]["name"] == "test_novikov_persisted"
+    assert sim2.campaigns[camp_id]["name"] == "test_rykov_persisted"
 
     # Reset restores seed state
     sim2.reset()

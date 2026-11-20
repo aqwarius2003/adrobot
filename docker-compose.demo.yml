@@ -10,7 +10,7 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - CAMPAIGN_SURNAME=${CAMPAIGN_SURNAME:-novikov}
+      - CAMPAIGN_SURNAME=${CAMPAIGN_SURNAME:-rykov}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 10s
@@ -37,7 +37,7 @@ services:
       - KT_MODE=demo
       - DEMO_SIMULATOR_URL=http://simulator:8001
       - DATABASE_URL=sqlite:////app/data/demo_app.db
-      - CAMPAIGN_SURNAME=${CAMPAIGN_SURNAME:-novikov}
+      - CAMPAIGN_SURNAME=${CAMPAIGN_SURNAME:-rykov}
     volumes:
       - adrobot_demo_data:/app/data
     healthcheck:

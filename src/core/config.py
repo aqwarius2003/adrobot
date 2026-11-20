@@ -54,7 +54,7 @@ class Settings(BaseSettings):
         description="Keitaro Admin API key",
     )
     CAMPAIGN_SURNAME: str = Field(
-        default="novikov",
+        default="rykov",
         description="Surname used for campaign name prefix: test_<surname>_...",
     )
 

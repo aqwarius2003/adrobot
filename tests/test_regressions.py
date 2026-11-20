@@ -25,7 +25,7 @@ class MockRegressionKT(KeitaroGateway):
         self.campaigns = {
             500: {
                 "id": 500,
-                "name": "test_novikov_regress",
+                "name": "test_rykov_regress",
                 "alias": "regress-500",
                 "domain_id": 10,
             },

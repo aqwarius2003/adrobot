@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const createAnotherBtn = document.getElementById('createAnotherBtn');
 
   // Surname prefix for live name preview
-  let surnamePrefix = 'test_novikov_';
+  let surnamePrefix = 'test_rykov_';
   if (namePreview && namePreview.textContent) {
     const match = namePreview.textContent.match(/^(test_[a-z0-9_]+_)/i);
     if (match) surnamePrefix = match[1].toLowerCase();
