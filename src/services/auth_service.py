@@ -76,7 +76,7 @@ class AuthService:
             return {
                 "success": False,
                 "status_code": 503,
-                "detail": "Не удалось проверить подключение. Попробуйте позже или откройте демо",
+                "detail": "Не удалось проверить подключение. Попробуйте позже.",
             }
 
         configured_url = settings.get_real_keitaro_base_url()
@@ -107,7 +107,7 @@ class AuthService:
                     return {
                         "success": False,
                         "status_code": 503,
-                        "detail": "Не удалось проверить подключение. Попробуйте позже или откройте демо",
+                        "detail": "Не удалось проверить подключение. Попробуйте позже.",
                     }
                 # Success: issue session and reset rate limit
                 token = generate_session_token()
@@ -144,7 +144,7 @@ class AuthService:
                 return {
                     "success": False,
                     "status_code": 503,
-                    "detail": "Не удалось проверить подключение. Попробуйте позже или откройте демо",
+                    "detail": "Не удалось проверить подключение. Попробуйте позже.",
                 }
 
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
@@ -155,12 +155,12 @@ class AuthService:
             return {
                 "success": False,
                 "status_code": 503,
-                "detail": "Не удалось проверить подключение. Попробуйте позже или откройте демо",
+                "detail": "Не удалось проверить подключение. Попробуйте позже.",
             }
         except Exception as exc:
             logger.error("Unexpected auth verification failure: %s", type(exc).__name__)
             return {
                 "success": False,
                 "status_code": 503,
-                "detail": "Не удалось проверить подключение. Попробуйте позже или откройте демо",
+                "detail": "Не удалось проверить подключение. Попробуйте позже.",
             }

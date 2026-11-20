@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.core.config import (
@@ -40,15 +40,17 @@ def build_connection_context(
     clean_mode = (mode or "").strip().lower()
     if clean_mode not in ("real", "demo"):
         raise ValueError(f"Invalid connection mode: '{mode}'. Must be 'real' or 'demo'.")
+    if clean_mode == "demo" and not settings.DEMO_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
 
     # Validate isolation between configured real and demo resources
     real_db = settings.get_real_database_url()
-    demo_db = settings.get_demo_database_url()
-    validate_database_isolation(real_db, demo_db)
-
     real_tracker = settings.get_real_keitaro_base_url()
-    demo_tracker = settings.get_demo_keitaro_base_url()
-    validate_upstream_isolation(real_tracker, demo_tracker)
+    if settings.DEMO_ENABLED:
+        demo_db = settings.get_demo_database_url()
+        demo_tracker = settings.get_demo_keitaro_base_url()
+        validate_database_isolation(real_db, demo_db)
+        validate_upstream_isolation(real_tracker, demo_tracker)
 
     if clean_mode == "demo":
         base_url = normalize_tracker_url(demo_tracker)
@@ -92,12 +94,10 @@ def get_connection_context(request: Request) -> ConnectionContext:
         mode = "demo"
     else:
         cookie_mode = request.cookies.get("adrobot_mode")
-        if cookie_mode in ("real", "demo"):
+        if cookie_mode == "real" or (cookie_mode == "demo" and settings.DEMO_ENABLED):
             mode = cookie_mode
-        elif settings.KT_MODE in ("real", "demo"):
-            mode = settings.KT_MODE
         else:
-            mode = "real"
+            mode = settings.default_mode
 
     if mode == "real":
         from fastapi import HTTPException, status

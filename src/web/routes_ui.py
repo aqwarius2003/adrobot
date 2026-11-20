@@ -13,9 +13,15 @@ from src.core.security import (
 )
 
 router = APIRouter(include_in_schema=False)
+demo_router = APIRouter(include_in_schema=False)
+
+
+def _template_context(request: Request) -> dict:
+    return {"demo_enabled": request.app.state.demo_enabled}
+
 
 templates_dir = os.path.join(os.path.dirname(__file__), "templates")
-templates = Jinja2Templates(directory=templates_dir)
+templates = Jinja2Templates(directory=templates_dir, context_processors=[_template_context])
 
 
 @router.get("/login")
@@ -31,11 +37,9 @@ def login_page(request: Request):
 
 def _get_effective_mode(request: Request) -> str:
     cookie_mode = request.cookies.get("adrobot_mode")
-    if cookie_mode in ("real", "demo"):
+    if cookie_mode == "real" or (cookie_mode == "demo" and settings.DEMO_ENABLED):
         return cookie_mode
-    if settings.KT_MODE in ("real", "demo"):
-        return settings.KT_MODE
-    return "real"
+    return settings.default_mode
 
 
 @router.get("/")
@@ -46,7 +50,9 @@ def index(request: Request):
     Otherwise -> /login
     """
     cookie_mode = request.cookies.get("adrobot_mode")
-    if cookie_mode == "demo" or (not cookie_mode and settings.is_demo_mode):
+    if settings.DEMO_ENABLED and (
+        cookie_mode == "demo" or (not cookie_mode and settings.is_demo_mode)
+    ):
         return RedirectResponse(url="/demo/editor", status_code=307)
 
     session = get_current_session(request, store=get_security_store())
@@ -62,7 +68,9 @@ def legacy_editor_redirect(request: Request):
     session = get_current_session(request, store=get_security_store())
     cookie_mode = request.cookies.get("adrobot_mode")
 
-    if cookie_mode == "demo" or (not cookie_mode and settings.is_demo_mode):
+    if settings.DEMO_ENABLED and (
+        cookie_mode == "demo" or (not cookie_mode and settings.is_demo_mode)
+    ):
         mode = "demo"
     elif session:
         mode = "real"
@@ -107,7 +115,7 @@ def real_editor_page(request: Request):
     )
 
 
-@router.get("/demo/editor")
+@demo_router.get("/demo/editor")
 def demo_editor_page(request: Request):
     session = get_current_session(request, store=get_security_store())
     if session:
@@ -143,7 +151,7 @@ def demo_editor_page(request: Request):
     )
 
 
-@router.get("/demo/simulator")
+@demo_router.get("/demo/simulator")
 def demo_simulator_page(request: Request):
     session = get_current_session(request, store=get_security_store())
     if session:
@@ -176,7 +184,7 @@ def demo_simulator_page(request: Request):
     )
 
 
-@router.get("/real/simulator")
+@demo_router.get("/real/simulator")
 def real_simulator_forbidden():
     """Simulator tab is strictly demo-only."""
     return RedirectResponse(url="/real/editor")
@@ -213,7 +221,7 @@ def real_creator_page(request: Request):
     )
 
 
-@router.get("/demo/creator")
+@demo_router.get("/demo/creator")
 def demo_creator_page(request: Request):
     """Create campaigns against the isolated simulator connection."""
     session = get_current_session(request, store=get_security_store())

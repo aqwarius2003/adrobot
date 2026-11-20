@@ -1,7 +1,7 @@
 import os
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,6 +63,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Optional development tools are never initialized by a normal launch.
+    DEMO_ENABLED: bool = Field(default=False)
+
     # Tracker connection mode: 'real' (live Keitaro) or 'demo' (autonomous simulator)
     KT_MODE: str = Field(
         default="real",
@@ -73,9 +76,13 @@ class Settings(BaseSettings):
         description="URL of the autonomous Keitaro simulator service in demo mode",
     )
 
-    @field_validator("KT_MODE")
+    @field_validator("KT_MODE", mode="before")
     @classmethod
-    def validate_kt_mode(cls, v: str) -> str:
+    def validate_kt_mode(cls, v: str, info: ValidationInfo) -> str:
+        if not info.data.get("DEMO_ENABLED", False):
+            return "real"
+        if not isinstance(v, str):
+            raise ValueError("KT_MODE must be a string")
         clean = v.strip().lower()
         if clean not in ("real", "demo"):
             raise ValueError(f"Invalid KT_MODE '{v}'. Must be either 'real' or 'demo'.")
@@ -227,7 +234,11 @@ class Settings(BaseSettings):
 
     @property
     def is_demo_mode(self) -> bool:
-        return self.KT_MODE.strip().lower() == "demo"
+        return self.DEMO_ENABLED and self.KT_MODE.strip().lower() == "demo"
+
+    @property
+    def default_mode(self) -> str:
+        return "demo" if self.is_demo_mode else "real"
 
     @property
     def effective_api_key(self) -> str:

@@ -43,6 +43,7 @@ jobs:
       - name: Test migrations on clean temporary database
         env:
           DATABASE_URL: "sqlite:////tmp/ci_test.db"
+          REAL_DATABASE_URL: "sqlite:////tmp/ci_test.db"
         run: |
           uv run --locked alembic upgrade head
 
@@ -59,6 +60,7 @@ jobs:
           node tests/test_frontend_geo.js
           node tests/test_frontend_combobox.js
           node tests/test_frontend_errors.js
+          node tests/test_frontend_login.js
           node tests/test_frontend_simulator.js
           node tests/test_frontend_view_in_kt.js
           node tests/test_frontend_weight_controls.js
@@ -84,18 +86,58 @@ jobs:
 
       - name: Smoke test container /api/health on runner
         run: |
+          trap 'docker logs runner-smoke-app; docker rm -f runner-smoke-app >/dev/null 2>&1 || true' EXIT
           docker run -d --name runner-smoke-app -p 8000:8000 \
             -e APP_ENV=production \
             -e COMMIT_SHA=${{ github.sha }} \
             adrobot:${{ github.sha }}
 
-          sleep 5
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/api/health > runner-health.json; then
+              break
+            fi
+            sleep 1
+          done
 
-          HEALTH_JSON=$(curl -fsS http://localhost:8000/api/health)
+          HEALTH_JSON=$(cat runner-health.json)
           echo "Smoke Health Response: $HEALTH_JSON"
 
           echo "$HEALTH_JSON" | grep -q '"status":"ok"' || (echo "Health check failed!" && exit 1)
           echo "$HEALTH_JSON" | grep -q '"database":"connected"' || (echo "DB check failed!" && exit 1)
 
-          docker stop runner-smoke-app
-          docker rm runner-smoke-app
+          docker logs runner-smoke-app > runner-startup.log 2>&1
+          if grep -Ei 'demo|simulator|симулятор' runner-startup.log; then
+            echo "Unexpected optional component in startup logs"
+            exit 1
+          fi
+
+          docker exec -i runner-smoke-app python - <<'PY'
+          import json
+          import sqlite3
+          import sys
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          import src.main
+
+          assert not any(name.startswith('src.simulator') or name == 'src.api.routes_demo' for name in sys.modules)
+          names = {path.name for path in Path('/app/data').iterdir()}
+          assert {'app.db', 'security.db'} <= names, names
+          assert not any('demo' in name or 'simulator' in name for name in names), names
+          with sqlite3.connect('/app/data/app.db') as db:
+              assert db.execute('SELECT version_num FROM alembic_version').fetchone()
+              assert db.execute('SELECT count(*) FROM campaigns').fetchone()[0] == 0
+          base = 'http://127.0.0.1:8000'
+          for path in ('/login', '/openapi.json', '/api/auth/session'):
+              body = urllib.request.urlopen(base + path).read().decode()
+              assert all(word not in body.lower() for word in ('demo', 'демо', 'симулятор')), path
+          for path in ('/demo/editor', '/demo/creator', '/demo/simulator', '/api/demo/campaigns'):
+              try:
+                  urllib.request.urlopen(base + path)
+              except urllib.error.HTTPError as error:
+                  assert error.code == 404, (path, error.code)
+              else:
+                  raise AssertionError(path)
+          print('Keitaro-only container startup verified')
+          PY

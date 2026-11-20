@@ -16,8 +16,10 @@ if config.config_file_name is not None and not config.attributes.get("skip_loggi
 target_metadata = Base.metadata
 
 # Override URL from application settings based on mode (real, demo, or security)
-mode = context.get_x_argument(as_dictionary=True).get("mode", settings.KT_MODE)
+mode = context.get_x_argument(as_dictionary=True).get("mode", settings.default_mode)
 if mode == "demo":
+    if not settings.DEMO_ENABLED:
+        raise ValueError("Requested database is not enabled")
     target_url = settings.get_demo_database_url()
 elif mode == "security":
     target_url = settings.get_security_database_url()
@@ -41,7 +43,18 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def migrate_on_connection(connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 def run_migrations_online() -> None:
+    supplied_connection = config.attributes.get("connection")
+    if supplied_connection is not None:
+        migrate_on_connection(supplied_connection)
+        return
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -49,13 +62,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
+        migrate_on_connection(connection)
 
 
 if context.is_offline_mode():

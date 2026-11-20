@@ -19,6 +19,7 @@ from src.core.security import (
 from src.services.auth_service import AuthService
 
 auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
+mode_router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def _verify_origin_and_csrf(request: Request, session: dict[str, Any] | None) -> None:
@@ -154,7 +155,7 @@ async def get_session_status(
     return JSONResponse(
         content={
             "authenticated": False,
-            "mode": "demo",
+            "mode": "demo" if settings.DEMO_ENABLED else "real",
             "csrf_token": None,
             "expires_at": None,
         },
@@ -162,7 +163,7 @@ async def get_session_status(
     )
 
 
-@auth_router.post("/switch-mode")
+@mode_router.post("/switch-mode")
 async def switch_mode(
     req: SwitchModeRequest,
     request: Request,
@@ -174,6 +175,8 @@ async def switch_mode(
     real -> demo: revokes real session, deletes session cookie, sets mode cookie.
     demo -> real: requires valid active session or returns 401.
     """
+    if not settings.DEMO_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
     _verify_origin_and_csrf(request, session)
     clean_mode = req.mode.strip().lower()
     if clean_mode not in ("real", "demo"):

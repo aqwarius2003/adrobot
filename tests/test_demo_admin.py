@@ -226,8 +226,6 @@ def test_simulator_template_elements_task_3_1(client: TestClient):
     # Unified naming: title, page title, menu item, save button, hint
     assert "<title>Keitaro — симулятор — Campaign Manager</title>" in html
     assert "Keitaro — симулятор" in html
-    assert "Здесь вы меняете данные симулятора Keitaro." in html
-    assert "Чтобы загрузить сохранённые изменения в редактор ADROBOT, нажмите" in html
     assert "Сохранить в симуляторе" in html
     assert "Fingerprint:" not in html
     assert "имитация" not in html

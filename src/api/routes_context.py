@@ -5,6 +5,7 @@ from src.core.config import settings
 from src.core.connection_context import build_connection_context
 
 router = APIRouter(prefix="/api/session", tags=["Session"])
+mode_router = APIRouter(prefix="/api/session", tags=["Session"])
 
 
 class ModeUpdateRequest(BaseModel):
@@ -19,19 +20,19 @@ def get_session_context(request: Request):
     session = get_current_session(request, store=get_security_store())
     cookie_mode = request.cookies.get("adrobot_mode")
 
-    if cookie_mode == "demo":
+    if cookie_mode == "demo" and settings.DEMO_ENABLED:
         mode = "demo"
     elif session:
         mode = "real"
     elif cookie_mode == "real":
         mode = "real"
     else:
-        mode = settings.KT_MODE if settings.KT_MODE in ("real", "demo") else "real"
+        mode = settings.default_mode
 
     ctx = build_connection_context(mode, api_key=session["_api_key"] if session else None)
     return {
         "mode": ctx.mode,
-        "is_demo": ctx.is_demo,
+        **({"is_demo": ctx.is_demo} if settings.DEMO_ENABLED else {}),
         "base_url": ctx.base_url,
         "badge": "Демо · симулятор" if ctx.is_demo else "Подключение: Keitaro",
         "is_configured": ctx.is_configured,
@@ -39,9 +40,11 @@ def get_session_context(request: Request):
     }
 
 
-@router.post("/context")
+@mode_router.post("/context")
 def set_session_context(payload: ModeUpdateRequest, request: Request, response: Response):
     """Update connection mode preference without modifying global process settings."""
+    if not settings.DEMO_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
     clean_mode = payload.mode.strip().lower()
     if clean_mode not in ("real", "demo"):
         raise HTTPException(

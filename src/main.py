@@ -10,11 +10,10 @@ from fastapi.staticfiles import StaticFiles
 from src.api.routes_auth import auth_router
 from src.api.routes_campaigns import router as campaigns_router
 from src.api.routes_context import router as context_router
-from src.api.routes_demo import router as demo_router
 from src.api.routes_health import router as health_router
 from src.api.routes_streams import router as streams_router
 from src.core.config import settings
-from src.core.database import init_db
+from src.core.database import migrate_enabled_databases
 from src.core.logging import logger, setup_logging
 from src.web.routes_ui import router as ui_router
 
@@ -39,7 +38,9 @@ def recover_interrupted_streams(session_or_engine=None, now: float | None = None
         else:  # Session
             factories = [lambda: session_or_engine]
     else:
-        factories = [RealSessionLocal, DemoSessionLocal]
+        factories = [RealSessionLocal]
+        if settings.DEMO_ENABLED and DemoSessionLocal is not None:
+            factories.append(DemoSessionLocal)
 
     for factory in factories:
         s_db = factory()
@@ -99,12 +100,12 @@ async def lifespan(app: FastAPI):
         "Starting Keitaro Campaign Manager (version=%s, env=%s, mode=%s)",
         settings.APP_VERSION,
         settings.APP_ENV,
-        settings.KT_MODE,
+        settings.default_mode,
     )
 
     # Auto-start local simulator on port 8001 if configured and not already running
     sim_server = None
-    if (
+    if settings.DEMO_ENABLED and (
         "127.0.0.1:8001" in settings.DEMO_SIMULATOR_URL
         or "localhost:8001" in settings.DEMO_SIMULATOR_URL
     ):
@@ -172,9 +173,9 @@ async def lifespan(app: FastAPI):
                         "Autonomous Keitaro simulator failed to start or did not become healthy within 3 seconds"
                     )
 
-    # Auto-create tables for both real and demo isolated databases
-    init_db()
-    logger.info("Real and Demo databases initialized successfully")
+    # Upgrade only enabled stores; preserve existing drafts and archives.
+    migrate_enabled_databases()
+    logger.info("Application database migrations completed")
 
     # Recover interrupted in-progress sync operations from prior crashes
     try:
@@ -201,6 +202,7 @@ def create_app() -> FastAPI:
         version=settings.APP_VERSION,
         lifespan=lifespan,
     )
+    app.state.demo_enabled = settings.DEMO_ENABLED
 
     # Security headers
     @app.middleware("http")
@@ -294,14 +296,25 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(health_router)
     app.include_router(context_router)
-    app.include_router(demo_router)
-
-    # Mount campaigns and streams under /api (default/backward-compat), /api/real, and /api/demo
-    for prefix in ("/api", "/api/real", "/api/demo"):
+    # Keep the existing real API aliases. Optional routes do not exist in a
+    # normal launch, including in OpenAPI.
+    for prefix in ("/api", "/api/real"):
         app.include_router(campaigns_router, prefix=prefix)
         app.include_router(streams_router, prefix=prefix)
 
     app.include_router(ui_router)
+    if settings.DEMO_ENABLED:
+        from src.api.routes_auth import mode_router as auth_mode_router
+        from src.api.routes_context import mode_router as context_mode_router
+        from src.api.routes_demo import router as demo_router
+        from src.web.routes_ui import demo_router as demo_ui_router
+
+        app.include_router(auth_mode_router)
+        app.include_router(context_mode_router)
+        app.include_router(demo_router)
+        app.include_router(campaigns_router, prefix="/api/demo")
+        app.include_router(streams_router, prefix="/api/demo")
+        app.include_router(demo_ui_router)
 
     # Static assets directory
     static_dir = os.path.join(os.path.dirname(__file__), "web", "static")

@@ -37,8 +37,12 @@ services:
       - APP_HOST=0.0.0.0
       - APP_PORT=8000
       - KT_MODE=demo
+      - DEMO_ENABLED=true
       - DEMO_SIMULATOR_URL=http://simulator:8001
       - DATABASE_URL=sqlite:////app/data/demo_app.db
+      - REAL_DATABASE_URL=sqlite:////app/data/app.db
+      - DEMO_DATABASE_URL=sqlite:////app/data/demo_app.db
+      - SECURITY_DATABASE_URL=sqlite:////app/data/security.db
       - CAMPAIGN_SURNAME=${CAMPAIGN_SURNAME:-rykov}
     volumes:
       - adrobot_demo_data:/app/data

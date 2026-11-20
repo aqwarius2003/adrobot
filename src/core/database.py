@@ -85,9 +85,13 @@ def _create_engine_and_session(db_url: str) -> tuple[Any, sessionmaker[Session]]
     return eng, factory
 
 
-# Two strictly isolated engines and session factories
+# Optional engines must not create directories or load DB drivers when disabled.
 real_engine, RealSessionLocal = _create_engine_and_session(settings.get_real_database_url())
-demo_engine, DemoSessionLocal = _create_engine_and_session(settings.get_demo_database_url())
+demo_engine, DemoSessionLocal = (
+    _create_engine_and_session(settings.get_demo_database_url())
+    if settings.DEMO_ENABLED
+    else (None, None)
+)
 
 
 def configure_engines(real_url: str | None = None, demo_url: str | None = None) -> None:
@@ -96,10 +100,12 @@ def configure_engines(real_url: str | None = None, demo_url: str | None = None) 
     global engine, SessionLocal
 
     r_url = real_url or settings.get_real_database_url()
-    d_url = demo_url or settings.get_demo_database_url()
-
     real_engine, RealSessionLocal = _create_engine_and_session(r_url)
-    demo_engine, DemoSessionLocal = _create_engine_and_session(d_url)
+    demo_engine, DemoSessionLocal = (
+        _create_engine_and_session(demo_url or settings.get_demo_database_url())
+        if settings.DEMO_ENABLED
+        else (None, None)
+    )
 
     engine = demo_engine if settings.is_demo_mode else real_engine
     SessionLocal = DemoSessionLocal if settings.is_demo_mode else RealSessionLocal
@@ -108,8 +114,12 @@ def configure_engines(real_url: str | None = None, demo_url: str | None = None) 
 def get_session_factory(mode: str) -> sessionmaker[Session]:
     clean = (mode or "").strip().lower()
     if clean == "demo":
+        if not settings.DEMO_ENABLED or DemoSessionLocal is None:
+            raise ValueError("Connection is not available")
         return DemoSessionLocal
-    return RealSessionLocal
+    if clean == "real":
+        return RealSessionLocal
+    raise ValueError("Invalid connection mode")
 
 
 def init_db(mode: str | None = None) -> None:
@@ -119,10 +129,28 @@ def init_db(mode: str | None = None) -> None:
     if mode == "real":
         Base.metadata.create_all(bind=real_engine)
     elif mode == "demo":
+        get_session_factory("demo")
         Base.metadata.create_all(bind=demo_engine)
     else:
         Base.metadata.create_all(bind=real_engine)
-        Base.metadata.create_all(bind=demo_engine)
+        if settings.DEMO_ENABLED:
+            Base.metadata.create_all(bind=demo_engine)
+
+
+def migrate_enabled_databases() -> None:
+    from src.core.migrations import migrate_database
+
+    engines = [real_engine]
+    if settings.DEMO_ENABLED:
+        get_session_factory("demo")
+        engines.append(demo_engine)
+    for enabled_engine in engines:
+        # Use the runtime connection so memory stores and explicitly rebound
+        # engines receive the same schema as file-backed stores.
+        with enabled_engine.begin() as connection:
+            migrate_database(
+                enabled_engine.url.render_as_string(hide_password=False), connection=connection
+            )
 
 
 # Legacy bindings for backward compatibility with single-engine helpers/tests

@@ -95,6 +95,7 @@
       cursor: not-allowed;
     }
 
+    {% if demo_enabled %}
     .btn-demo {
       width: 100%;
       padding: 11px;
@@ -113,6 +114,7 @@
     .btn-demo:hover {
       background: #e2e8f0;
     }
+    {% endif %}
 
     .login-alert {
       padding: 12px;
@@ -158,7 +160,7 @@
   <div class="login-container" role="main">
     <div class="login-header">
       <h1>Вход в ADROBOT</h1>
-      <p>Для работы с настоящим Keitaro нужен API-ключ.<br>Демо работает с тестовыми данными.</p>
+      <p>Для работы с Keitaro нужен API-ключ.{% if demo_enabled %}<br>Демо работает с тестовыми данными.{% endif %}</p>
     </div>
 
     <div id="loginAlert" class="login-alert" role="alert" aria-live="polite"></div>
@@ -173,7 +175,7 @@
 
       <div class="login-actions">
         <button type="submit" id="submitBtn" class="btn-submit">Войти в Keitaro</button>
-        <button type="button" id="openDemoBtn" class="btn-demo">Открыть демо без ключа</button>
+        {% if demo_enabled %}<button type="button" id="openDemoBtn" class="btn-demo">Открыть демо без ключа</button>{% endif %}
       </div>
     </form>
 
@@ -185,6 +187,7 @@
 
   <script src="/static/js/api_client.js"></script>
   <script src="/static/js/login.js"></script>
+  {% if demo_enabled %}<script src="/static/js/login_demo.js"></script>{% endif %}
 </body>
 
 </html>

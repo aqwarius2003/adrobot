@@ -66,33 +66,10 @@ def test_destructive_ddl_blocked_on_non_temp_database():
                 pass
 
 
-def test_runtime_data_files_preserved_after_tests():
-    """Verify that existing data/app.db, data/demo_app.db and data/simulator_state.json have not been wiped.
-
-    Checks exact SHA-256 match against pre-remediation backup hashes.
-    """
-    app_db = os.path.join(os.getcwd(), "data", "app.db")
-    demo_db = os.path.join(os.getcwd(), "data", "demo_app.db")
-    sim_json = os.path.join(os.getcwd(), "data", "simulator_state.json")
-    backup_dir = os.path.join(os.getcwd(), "data_backup_pre_remediation")
-
-    if os.path.exists(backup_dir):
-        b_app = os.path.join(backup_dir, "app.db")
-        b_demo = os.path.join(backup_dir, "demo_app.db")
-        b_sim = os.path.join(backup_dir, "simulator_state.json")
-
-        if os.path.exists(b_app) and os.path.exists(app_db):
-            assert _file_hash(app_db) == _file_hash(b_app), (
-                "data/app.db was modified during test run!"
-            )
-        if os.path.exists(b_demo) and os.path.exists(demo_db):
-            assert _file_hash(demo_db) == _file_hash(b_demo), (
-                "data/demo_app.db was modified during test run!"
-            )
-        if os.path.exists(b_sim) and os.path.exists(sim_json):
-            assert _file_hash(sim_json) == _file_hash(b_sim), (
-                "data/simulator_state.json was modified during test run!"
-            )
+def test_runtime_data_files_preserved_after_tests(runtime_file_hashes):
+    """All pre-existing runtime files retain the hashes captured before collection."""
+    for path, original_hash in runtime_file_hashes.items():
+        assert _file_hash(path) == original_hash, f"Runtime file changed during tests: {path}"
 
 
 def test_canary_database_records_strictly_preserved():

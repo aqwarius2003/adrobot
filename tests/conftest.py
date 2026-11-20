@@ -1,8 +1,17 @@
+import hashlib
 import os
 import shutil
 import tempfile
+from pathlib import Path
 
 import pytest
+
+# Compare with this run's starting files, not a historical manual backup.
+_RUNTIME_HASHES = {
+    path: hashlib.sha256(path.read_bytes()).hexdigest()
+    for path in (Path(__file__).resolve().parents[1] / "data").rglob("*")
+    if path.is_file()
+}
 
 # 1. Initialize safe isolated test environment BEFORE importing app code with side-effects
 _TEST_TEMP_DIR = tempfile.mkdtemp(prefix="adrobot_pytest_")
@@ -14,6 +23,11 @@ _TEST_SIM_STATE = os.path.join(_TEST_TEMP_DIR, "test_simulator_state.json")
 os.environ["ADROBOT_TESTING"] = "1"
 os.environ["ADROBOT_TEST_DIR"] = _TEST_TEMP_DIR
 os.environ["APP_ENV"] = "development"
+# The regression suite explicitly exercises both connections. Default-launch
+# acceptance tests run in separate processes with optional tools disabled.
+os.environ["DEMO_ENABLED"] = "true"
+os.environ["KT_MODE"] = "real"
+os.environ["DEMO_SIMULATOR_URL"] = "http://simulator.test:8001"
 os.environ["REAL_DATABASE_URL"] = f"sqlite:///{_TEST_REAL_DB}"
 os.environ["DEMO_DATABASE_URL"] = f"sqlite:///{_TEST_DEMO_DB}"
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_REAL_DB}"
@@ -47,6 +61,11 @@ simulator_storage.reset()
 def cleanup_test_temp_dir():
     """Ensure test databases and temporary simulator state are cleaned up on session end."""
     yield
+    for path, original_hash in _RUNTIME_HASHES.items():
+        assert path.exists(), f"Runtime file was removed by tests: {path}"
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == original_hash, (
+            f"Runtime file was modified by tests: {path}"
+        )
     try:
         shutil.rmtree(_TEST_TEMP_DIR, ignore_errors=True)
     except Exception:
@@ -56,3 +75,8 @@ def cleanup_test_temp_dir():
 @pytest.fixture
 def test_temp_dir() -> str:
     return _TEST_TEMP_DIR
+
+
+@pytest.fixture(scope="session")
+def runtime_file_hashes():
+    return _RUNTIME_HASHES

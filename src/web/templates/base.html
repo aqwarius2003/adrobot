@@ -85,7 +85,8 @@
           </div>
           {% endif %}
 
-          <!-- Mode Switcher in Header (Keitaro / Демо) -->
+          {% if demo_enabled %}
+          <!-- Mode Switcher -->
           <div class="mode-switch-container">
             <div class="mode-switcher-group" id="modeSwitcherGroup" role="group" aria-label="Keitaro / Демо" title="Keitaro / Демо">
               <button type="button" class="mode-btn {% if not is_demo %}active{% endif %}" id="modeBtnReal" data-mode="real" title="Переключиться на рабочий трекер Keitaro">
@@ -96,6 +97,7 @@
               </button>
             </div>
           </div>
+          {% endif %}
         </div>
       </header>
 
@@ -108,6 +110,7 @@
 
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
+  {% if demo_enabled %}
   <!-- Mode Switch Confirmation Modal -->
   <div id="modeSwitchModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-card">
@@ -125,11 +128,12 @@
       </div>
     </div>
   </div>
+  {% endif %}
 
   <!-- Safe JSON Application Configuration for CSP Compliance -->
   <script type="application/json" id="appConfigData">
     {
-      "is_demo": {{ 'true' if is_demo else 'false' }},
+      {% if demo_enabled %}"is_demo": {{ 'true' if is_demo else 'false' }},{% endif %}
       "current_mode": {{ (current_mode or '') | tojson }},
       "api_prefix": {{ (api_prefix or '') | tojson }},
       "surname": {{ (surname or '') | tojson }},
@@ -142,7 +146,7 @@
   <script src="/static/js/api_client.js"></script>
   <script src="/static/js/app_init.js"></script>
   <script src="/static/js/tooltip.js"></script>
-  <script src="/static/js/connection_mode.js"></script>
+  {% if demo_enabled %}<script src="/static/js/connection_mode.js"></script>{% endif %}
   {% block scripts %}{% endblock %}
 </body>
 

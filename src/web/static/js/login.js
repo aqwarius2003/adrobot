@@ -2,7 +2,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const loginForm = document.getElementById('loginForm');
   const apiKeyInput = document.getElementById('apiKeyInput');
   const submitBtn = document.getElementById('submitBtn');
-  const openDemoBtn = document.getElementById('openDemoBtn');
   const loginAlert = document.getElementById('loginAlert');
 
   let countdownInterval = null;
@@ -121,7 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const retrySec = data.retry_after_seconds || parseInt(res.headers.get('Retry-After') || '120', 10);
         startCountdown(retrySec);
       } else if (res.status === 503) {
-        showAlert(data.detail || 'Не удалось проверить подключение. Попробуйте позже или откройте демо', 'warning');
+        showAlert(data.detail || 'Не удалось проверить подключение. Попробуйте позже.', 'warning');
       } else {
         showAlert(data.detail || 'API-ключ не подходит или не даёт доступа к кампаниям', 'error');
       }
@@ -135,14 +134,4 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  openDemoBtn.addEventListener('click', async () => {
-    try {
-      await fetch('/api/auth/switch-mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'demo' }),
-      });
-    } catch (_) {}
-    window.location.href = '/demo/editor';
-  });
 });

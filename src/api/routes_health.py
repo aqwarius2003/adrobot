@@ -33,6 +33,6 @@ def get_health(db: Session = Depends(get_db)) -> HealthResponse:
         version=settings.APP_VERSION,
         commit_sha=settings.COMMIT_SHA,
         keitaro_configured=settings.is_keitaro_configured,
-        kt_mode=settings.KT_MODE,
+        kt_mode=settings.default_mode,
         environment=settings.APP_ENV,
     )

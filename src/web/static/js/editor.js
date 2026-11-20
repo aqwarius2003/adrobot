@@ -20,15 +20,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Check URL query parameters
   const urlParams = new URLSearchParams(window.location.search);
   const paramCampaignId = urlParams.get('campaign_id');
-  const paramNotice = urlParams.get('notice');
-
-  if (paramNotice === 'creator_unavailable_in_real_mode') {
-    showNotice(
-      'Создание кампаний через интерфейс доступно только в демо-режиме (KT_MODE=demo). В рабочем режиме Keitaro поддерживается только редактирование существующих кампаний.',
-      'info'
-    );
-  }
-
   // Load campaigns list
   async function loadCampaigns() {
     try {
