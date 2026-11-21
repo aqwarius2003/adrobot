@@ -698,6 +698,17 @@ body.app-body {
    ========================================================================== */
 .campaign-select-card {
   margin-bottom: 20px;
+  position: relative;
+  z-index: 60;
+  overflow: visible;
+}
+
+.campaign-dropdown[hidden] {
+  display: none;
+}
+
+.campaign-dropdown .dropdown-item {
+  overflow-wrap: anywhere;
 }
 
 .campaign-select-row {
@@ -709,7 +720,8 @@ body.app-body {
 
 .campaign-input-group {
   flex-grow: 1;
-  min-width: 280px;
+  min-width: min(280px, 100%);
+  flex-basis: 280px;
 }
 
 .campaign-sync-info {

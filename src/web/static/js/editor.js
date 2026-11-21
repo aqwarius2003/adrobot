@@ -1,5 +1,11 @@
 document.addEventListener('DOMContentLoaded', () => {
   const campaignSelect = document.getElementById('campaignSelect');
+  const campaignSearch = document.getElementById('campaignSearch');
+  const campaignPicker = new window.CampaignPicker({
+    select: campaignSelect,
+    input: campaignSearch,
+    dropdown: document.getElementById('campaignDropdown'),
+  });
   const fetchStreamsBtn = document.getElementById('fetchStreamsBtn');
   const fetchSpinner = document.getElementById('fetchSpinner');
   const lastSyncTime = document.getElementById('lastSyncTime');
@@ -48,6 +54,8 @@ document.addEventListener('DOMContentLoaded', () => {
         optionsHtml += `<option value="${c.remote_campaign_id}" ${selectedAttr}>[ID: ${c.remote_campaign_id}] ${escapeHtml(c.name)}</option>`;
       });
       campaignSelect.innerHTML = optionsHtml;
+      campaignPicker.sync();
+      campaignSearch.disabled = false;
 
       // Synchronize context and load campaign data
       if (targetAutoId) {

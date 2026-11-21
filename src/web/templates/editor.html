@@ -9,9 +9,11 @@
   <section class="card campaign-select-card">
     <div class="campaign-select-row">
       <div class="campaign-input-group">
-        <label for="campaignSelect" class="form-label">Выберите кампанию для редактирования:</label>
+        <label for="campaignSearch" class="form-label">Выберите кампанию для редактирования:</label>
         <div class="combobox-wrapper">
-          <select id="campaignSelect" class="form-control">
+          <input id="campaignSearch" type="text" class="form-control" placeholder="Поиск по названию или ID кампании" autocomplete="off" disabled>
+          <div id="campaignDropdown" class="combobox-dropdown campaign-dropdown" aria-label="Кампании" hidden></div>
+          <select id="campaignSelect" hidden>
             <option value="">-- Выберите кампанию --</option>
           </select>
         </div>
@@ -53,5 +55,6 @@
 
 {% block scripts %}
 <script src="/static/js/offer_combobox.js"></script>
+<script src="/static/js/campaign_picker.js"></script>
 <script src="/static/js/editor.js"></script>
 {% endblock %}

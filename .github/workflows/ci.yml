@@ -65,6 +65,7 @@ jobs:
           node tests/test_frontend_api_client.js
           node tests/test_frontend_geo.js
           node tests/test_frontend_combobox.js
+          node tests/test_frontend_campaign_picker.js
           node tests/test_frontend_errors.js
           node tests/test_frontend_login.js
           node tests/test_frontend_simulator.js
