@@ -58,21 +58,40 @@ class CampaignCreatorService:
 
     @staticmethod
     def format_source_params(source_params: Any) -> str:
-        """
-        Formats traffic source parameters into a URL query string.
-        Supports:
-        - str: "utm_source=fb&sub1={subid}"
-        - dict: {"source": {"name": "utm_source", "placeholder": "{network}"}, ...}
-        - dict: {"utm_source": "fb", "sub1": "{subid}"}
-        - None or empty
+        """Format traffic source parameters into a URL query string.
+
+        Compatibility and upstream contract notes:
+        - The upstream Keitaro API contract (API_CONTRACT.md §4, §10) does not
+          formalize the internal schema of traffic source parameters.
+        - This implementation maintains compatibility with internal formats used in
+          the application and mock suites:
+            * None or falsy (e.g. empty str, empty dict, empty list): returns empty string.
+            * str: query string (e.g. "utm_source=fb&sub1={subid}" or leading "?").
+            * dict:
+                - Nested descriptor mapping: {alias: {"name": "utm_source", "placeholder": "{network}"}}
+                  or {alias: {"name": "utm_source", "value": "{network}"}}
+                - Flat key-value mapping: {param_name: value} (e.g. {"debug": True, "flag": ""})
+                - Valueless/flag parameters (empty string value or empty placeholder in descriptor):
+                  appends bare parameter name without '='.
+        - Collections such as non-empty list or tuple are NOT supported: they return an empty string
+          and log a diagnostic warning recording only the collection type (never raw parameter items).
+        - For unsupported parameter values within a dict, logs a diagnostic warning recording only
+          the value type and omits that parameter.
         """
         if not source_params:
             return ""
+
         if isinstance(source_params, str):
-            return source_params.strip().lstrip("?").strip()
+            clean = source_params.strip()
+            if clean.startswith("?"):
+                clean = clean[1:].strip()
+            return clean
+
         if isinstance(source_params, dict):
             parts: list[str] = []
             for key, val in source_params.items():
+                if not key:
+                    continue
                 if isinstance(val, dict):
                     name = str(val.get("name") or key).strip()
                     placeholder = str(val.get("placeholder") or val.get("value") or "").strip()
@@ -80,14 +99,26 @@ class CampaignCreatorService:
                         parts.append(f"{name}={placeholder}")
                     elif name:
                         parts.append(name)
-                elif val is not None:
+                elif isinstance(val, (str, int, float, bool)):
                     name = str(key).strip()
                     placeholder = str(val).strip()
                     if name and placeholder:
                         parts.append(f"{name}={placeholder}")
                     elif name:
                         parts.append(name)
+                elif val is None:
+                    continue
+                else:
+                    logger.warning(
+                        "Ignoring parameter with unsupported value structure (type: %s)",
+                        type(val).__name__,
+                    )
             return "&".join(parts)
+
+        logger.warning(
+            "Unsupported traffic source parameters type: %s",
+            type(source_params).__name__,
+        )
         return ""
 
     def build_tracking_url(
@@ -109,7 +140,11 @@ class CampaignCreatorService:
             if clean_params:
                 base = f"{base}?{clean_params}"
         except Exception as exc:
-            logger.warning("Failed to format source params %r: %s", source_params, exc)
+            logger.warning(
+                "Failed to format source params (type: %s): %s",
+                type(source_params).__name__,
+                type(exc).__name__,
+            )
 
         return base
 
@@ -201,7 +236,7 @@ class CampaignCreatorService:
 
         remote_ids: dict[str, Any] = dict(op.remote_ids or {})
 
-        # Step 1: Validate selected offers in Keitaro & calculate initial weights
+        # Validate selected offers in Keitaro & calculate initial weights
         op.stage = "verifying_offers"
         self.db.commit()
 
@@ -231,7 +266,7 @@ class CampaignCreatorService:
         calculated_states = calculate_weights(weight_states)
         offer_shares = {cs.offer_id: cs.share for cs in calculated_states}
 
-        # Step 2: Determine domain, group, traffic_source & parameters (F8)
+        # Resolve domain, group, traffic source and tracking parameters
         domain_id = request.domain_id or settings.DEFAULT_DOMAIN_ID
         domain_url = None
         domains = await self.kt_client.get_domains()
@@ -264,7 +299,7 @@ class CampaignCreatorService:
             traffic_source_id = sources[0].get("id")
             source_params = sources[0].get("parameters") or sources[0].get("template")
 
-        # Step 3: Create Campaign in Keitaro (with F7 duplicate search)
+        # Create campaign in Keitaro with idempotent recovery by matching alias
         remote_campaign_id = remote_ids.get("campaign_id")
         if not remote_campaign_id:
             op.stage = "creating_campaign"
@@ -345,7 +380,7 @@ class CampaignCreatorService:
                     exc,
                 )
 
-        # Step 4: Create Flow 1 (GEO -> Google redirect)
+        # Create Flow 1: target country GEOs redirected to search
         flow1_id = remote_ids.get("flow1_id")
         flow1_payload = {
             "campaign_id": remote_campaign_id,
@@ -381,7 +416,7 @@ class CampaignCreatorService:
                 self.db.commit()
                 raise KeitaroApiError(f"Failed to create Flow 1: {exc}") from exc
 
-        # Step 5: Create Flow 2 (Default -> Offers)
+        # Create Flow 2: default fallback routing across active offers
         flow2_id = remote_ids.get("flow2_id")
         flow2_payload = {
             "campaign_id": remote_campaign_id,
@@ -419,7 +454,7 @@ class CampaignCreatorService:
                 self.db.commit()
                 raise KeitaroApiError(f"Failed to create Flow 2: {exc}") from exc
 
-        # Step 6: Deep Read-Back Verification (F6)
+        # Deep read-back verification: verify streams and routing settings in Keitaro
         op.stage = "verifying"
         self.db.commit()
 
@@ -465,12 +500,12 @@ class CampaignCreatorService:
             self.db.commit()
             raise KeitaroApiError(op.error_message)
 
-        # Step 7: Build tracking URL with domain and source parameters (F8)
+        # Build tracking URL with domain and traffic source parameters
         tracking_url = self.build_tracking_url(domain_url, alias, source_params)
         remote_ids["tracking_url"] = tracking_url
         op.remote_ids = remote_ids
 
-        # Step 8: Persist in local database
+        # Persist created campaign, streams, and offer bindings in local database
         local_campaign = (
             self.db.query(Campaign).filter_by(remote_campaign_id=remote_campaign_id).first()
         )

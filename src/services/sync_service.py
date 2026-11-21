@@ -40,9 +40,6 @@ class StreamSyncService:
         self.kt_client = kt_client
         self.editor_service = StreamEditorService(db, kt_client)
 
-    def _compute_fingerprint(self, stream_data: dict[str, Any]) -> str:
-        return compute_stream_fingerprint(stream_data)
-
     async def push_stream(
         self,
         stream_id: int,
@@ -64,7 +61,7 @@ class StreamSyncService:
         key = idempotency_key or str(uuid.uuid4())
         now_ts = time.time()
 
-        # R10: Check existing idempotency key BEFORE checking stream revision
+        # Idempotency check: replay previous result before stream revision checks to prevent duplicate submissions
         # If an identical request was already completed, return confirmed DTO immediately without second PUT
         if idempotency_key:
             existing_op = (
@@ -170,7 +167,7 @@ class StreamSyncService:
             op.lease_expires_at = now_ts + 30.0
             self.db.commit()
 
-        # R10: Atomic claim on stream in database to guarantee single-winner concurrency across independent sessions
+        # Atomic stream claim: guarantees single-winner concurrency and prevents race conditions across independent workers
         claimed_rows = (
             self.db.query(Stream)
             .filter(
@@ -209,7 +206,7 @@ class StreamSyncService:
             self.db.commit()
             raise KeitaroApiError(f"Preflight error contacting Keitaro: {exc}") from exc
 
-        current_remote_fp = self._compute_fingerprint(remote_stream)
+        current_remote_fp = compute_stream_fingerprint(remote_stream)
         if stream.remote_fingerprint and current_remote_fp != stream.remote_fingerprint:
             stream.sync_status = "conflict"
             op.status = "failed"
@@ -254,7 +251,7 @@ class StreamSyncService:
 
             return self.editor_service._build_stream_dto(stream)
 
-        # Step 2: Send PUT to Keitaro
+        # Send updated stream offer shares to Keitaro via PUT
         op.stage = "updating_kt"
         op.lease_expires_at = time.time() + 30.0
         self.db.commit()
@@ -276,7 +273,7 @@ class StreamSyncService:
             self.db.commit()
             return await self._reconcile_timeout(stream, candidate_offers, op)
 
-        # Step 3: Read-back Verification GET
+        # Read-back verification: fetch stream state from Keitaro to confirm applied changes
         op.stage = "verifying"
         op.lease_expires_at = time.time() + 30.0
         self.db.commit()
@@ -304,7 +301,7 @@ class StreamSyncService:
                 f"Read-back verification mismatch between Keitaro and published candidate. Expected {cand_dict}, got {rb_dict}"
             )
 
-        # Step 4: Verify active ownership and update Baseline atomically
+        # Verify worker ownership and update Baseline snapshot atomically
         self.db.expire_all()
         current_op = self.db.query(Operation).filter_by(id=op.id).first()
         if not current_op or current_op.worker_id != WORKER_ID:
@@ -340,7 +337,7 @@ class StreamSyncService:
                 break
 
         stream.sync_status = "clean" if is_clean else "dirty"
-        stream.remote_fingerprint = self._compute_fingerprint(read_back_stream)
+        stream.remote_fingerprint = compute_stream_fingerprint(read_back_stream)
         stream.last_sync_at = datetime.now(UTC)
         stream.revision += 1
 
@@ -358,7 +355,7 @@ class StreamSyncService:
         if not stream:
             raise ValueError(f"Stream #{stream_id} not found")
 
-        # R3: Disallow reconciliation on normal dirty/clean streams without undetermined operation
+        # Disallow reconciliation on normal dirty or clean streams without an undetermined operation
         if stream.sync_status not in ("unknown", "verifying"):
             raise EditorConflictError(
                 f"Reconciliation is only permitted for streams with undetermined sync state ('unknown' or 'verifying'), but stream '{stream.name}' is currently '{stream.sync_status}'."
@@ -413,7 +410,7 @@ class StreamSyncService:
 
             self.db.expire_all()
 
-            # R3/R10: Atomic verification of operation currency and generation
+            # Atomic verification of operation currency and generation
             if op:
                 base_rev = None
                 if isinstance(op.candidate_payload, dict):
@@ -434,7 +431,7 @@ class StreamSyncService:
 
             if cand_dict and rb_dict == cand_dict:
                 # Outcome 1: KT state matches candidate -> confirmed success of candidate
-                # R3: Update Baseline strictly from candidate snapshot, preserving pins from local_snapshot
+                # Update Baseline strictly from candidate snapshot, preserving pins from local snapshot
                 cand_offer_map = {o["offer_id"]: o for o in candidate_offers}
                 local_snap_map = {}
                 if (
@@ -484,7 +481,7 @@ class StreamSyncService:
                         break
 
                 stream.sync_status = "clean" if is_clean else "dirty"
-                stream.remote_fingerprint = self._compute_fingerprint(read_back)
+                stream.remote_fingerprint = compute_stream_fingerprint(read_back)
                 stream.last_sync_at = datetime.now(UTC)
                 stream.revision += 1
                 if op:

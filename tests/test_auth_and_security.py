@@ -319,8 +319,8 @@ def test_cross_origin_mutating_request_rejected(client: TestClient, monkeypatch)
     assert "Origin mismatch" in res.json()["detail"]
 
 
-def test_r1_full_csrf_flow_editor_actions(client: TestClient, monkeypatch):
-    """R1: Safe CSRF client transport: login yields csrf_token, mutating calls require it."""
+def test_csrf_flow_editor_actions(client: TestClient, monkeypatch):
+    """Safe CSRF client transport: login yields csrf_token, mutating calls require it."""
     mock_response = httpx.Response(200, json=[{"id": 1}])
     monkeypatch.setattr(settings, "REAL_KEITARO_API_KEY", "secret-real-key-123")
     monkeypatch.setattr(settings, "REAL_KEITARO_BASE_URL", "https://tracker.real.com")
@@ -345,8 +345,8 @@ def test_r1_full_csrf_flow_editor_actions(client: TestClient, monkeypatch):
     assert with_csrf.status_code == 200
 
 
-def test_r4_safe_return_url_validation(client: TestClient):
-    """R4: return_to parameter must reject open redirects and javascript: schemes."""
+def test_safe_return_url_validation(client: TestClient, monkeypatch):
+    """Safe return_to URL validation: rejects open redirects, external hosts, and javascript schemes."""
     from src.core.security import validate_safe_return_url
 
     # Malicious URLs must fallback to /real/editor
@@ -370,11 +370,30 @@ def test_r4_safe_return_url_validation(client: TestClient):
     assert 'value="/real/editor"' in res.text
     assert "javascript:alert(1)" not in res.text
 
+    # Successful login returns sanitized return_to in JSON response
+    mock_response = httpx.Response(200, json=[{"id": 1}])
+    monkeypatch.setattr(settings, "REAL_KEITARO_API_KEY", "secret-real-key-123")
+    monkeypatch.setattr(settings, "REAL_KEITARO_BASE_URL", "https://tracker.real.com")
+    with patch("httpx.AsyncClient.get", return_value=mock_response):
+        login_res_bad = client.post(
+            "/api/auth/login",
+            json={"api_key": "secret-real-key-123", "return_to": "https://attacker.com"},
+        )
+        assert login_res_bad.status_code == 200
+        assert login_res_bad.json()["return_to"] == "/real/editor"
 
-def test_r5_concurrent_failed_attempts_do_not_escalate_tier_during_active_block(
+        login_res_good = client.post(
+            "/api/auth/login",
+            json={"api_key": "secret-real-key-123", "return_to": "/real/editor?campaign_id=10"},
+        )
+        assert login_res_good.status_code == 200
+        assert login_res_good.json()["return_to"] == "/real/editor?campaign_id=10"
+
+
+def test_concurrent_failed_attempts_do_not_escalate_tier_during_active_block(
     client: TestClient, monkeypatch
 ):
-    """R5: Concurrent failed attempts during active block must not escalate tier or extend block."""
+    """Concurrent failed attempts during active block must not escalate tier or extend block."""
     import concurrent.futures
 
     store = get_security_store()
@@ -407,8 +426,8 @@ def test_r5_concurrent_failed_attempts_do_not_escalate_tier_during_active_block(
     assert 0 < retry <= 120
 
 
-def test_r5_trusted_proxy_forwarded_for_resolution(client: TestClient, monkeypatch):
-    """R5: Resolve client IP safely via trusted proxy chain."""
+def test_trusted_proxy_forwarded_for_resolution(client: TestClient, monkeypatch):
+    """Resolve client IP safely via trusted proxy chain."""
     from src.core.security import get_client_ip
 
     monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["10.0.0.1", "127.0.0.1"])
@@ -455,8 +474,8 @@ def test_r6_direct_demo_navigation_prompts_confirmation(client: TestClient, monk
     assert "Переход в демонстрационный режим" in res_warn_creator.text
 
 
-def test_r7_production_readiness_and_security(client: TestClient, monkeypatch):
-    """R7: Production readiness checks reject dev secret and insecure HTTP; real HTML sets no-store."""
+def test_production_readiness_and_security(client: TestClient, monkeypatch):
+    """Production readiness checks reject dev secret and insecure HTTP; real HTML sets no-store."""
     mock_response = httpx.Response(200, json=[{"id": 1}])
     monkeypatch.setattr(settings, "REAL_KEITARO_API_KEY", "secret-real-key-123")
     monkeypatch.setattr(settings, "REAL_KEITARO_BASE_URL", "https://tracker.real.com")
@@ -501,8 +520,8 @@ def test_r7_production_readiness_and_security(client: TestClient, monkeypatch):
     assert "no-store" in res_editor.headers.get("cache-control", "")
 
 
-def test_r12_root_body_malformed_key_leakage_prevented(client: TestClient):
-    """R12: Malformed root or nested payloads do not reflect secret values in 422 errors."""
+def test_root_body_malformed_key_leakage_prevented(client: TestClient):
+    """Malformed root or nested payloads do not reflect secret values in 422 errors."""
     secret_marker_1 = "DO_NOT_LEAK_ROOT_ARRAY_99999"
     res1 = client.post("/api/auth/login", json=[{"api_key": secret_marker_1}])
     assert res1.status_code == 422
@@ -515,7 +534,7 @@ def test_r12_root_body_malformed_key_leakage_prevented(client: TestClient):
 
 
 def test_csp_compatibility_zero_inline_executable_scripts(client: TestClient, monkeypatch):
-    """R1/R6: Verify that CSP enforces script-src 'self' without unsafe-inline, and templates have zero inline scripts."""
+    """Verify that CSP enforces script-src 'self' without unsafe-inline, and templates have zero inline scripts."""
     import re
 
     mock_response = httpx.Response(200, json=[{"id": 1}])

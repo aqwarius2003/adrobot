@@ -86,8 +86,10 @@ async function runTests() {
   assert.strictEqual(retryRes.status, 200, 'Must retry and succeed after CSRF refresh');
   assert.strictEqual(client.getCsrfToken(), 'fresh-refreshed-token-456', 'Token must be updated to fresh token');
 
-  // Test 6: app_init.js parses inert JSON config and registers showToast
+  // Test 6: app_init.js, notifications.js, and utils.js modular utilities
   const appInitCode = fs.readFileSync('src/web/static/js/app_init.js', 'utf8');
+  const notificationsCode = fs.readFileSync('src/web/static/js/notifications.js', 'utf8');
+  const utilsCode = fs.readFileSync('src/web/static/js/utils.js', 'utf8');
   const mockDoc = {
     getElementById: (id) => {
       if (id === 'appConfigData') {
@@ -102,10 +104,14 @@ async function runTests() {
       setCsrfToken: (t) => { testWindow._token = t; }
     }
   };
+  new Function('window', 'document', utilsCode)(testWindow, mockDoc);
+  new Function('window', 'document', notificationsCode)(testWindow, mockDoc);
   new Function('window', 'document', appInitCode)(testWindow, mockDoc);
   assert.strictEqual(testWindow.APP_CONFIG.current_mode, 'demo', 'app_init must parse current_mode from JSON');
   assert.strictEqual(testWindow._token, 'test-token-789', 'app_init must register csrf_token with apiClient');
-  assert.strictEqual(typeof testWindow.showToast, 'function', 'app_init must define showToast');
+  assert.strictEqual(typeof testWindow.showToast, 'function', 'notifications must define showToast');
+  assert.strictEqual(typeof testWindow.escapeHtml, 'function', 'utils must define escapeHtml');
+  assert.strictEqual(testWindow.escapeHtml('<script>"test"&\''), '&lt;script&gt;&quot;test&quot;&amp;&#39;');
 
   // Test 7: confirm_switch_demo.js handles click and calls switch-mode
   const confirmCode = fs.readFileSync('src/web/static/js/confirm_switch_demo.js', 'utf8');
@@ -182,7 +188,7 @@ async function runTests() {
     }),
   };
   const toastWindow = { document: toastDoc };
-  new Function('window', 'document', appInitCode)(toastWindow, toastDoc);
+  new Function('window', 'document', notificationsCode)(toastWindow, toastDoc);
   toastWindow.showToast('Нет связи с приложением. Проверьте, что сервер запущен.', 'error');
   assert.strictEqual(toastContainerMock.children.length, 1, 'First toast added');
   // Second identical call

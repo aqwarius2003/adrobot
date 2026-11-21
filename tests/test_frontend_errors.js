@@ -31,10 +31,11 @@ assert.equal(humanize(new Error('Unknown failure')), 'Не удалось вып
 
 // Exercise the actual notification boundary, not a duplicate of its implementation.
 const template = fs.readFileSync('src/web/templates/base.html', 'utf8');
-assert.ok(template.indexOf('/static/js/errors.js') < template.indexOf('/static/js/app_init.js'));
-const appInitSource = fs.readFileSync('src/web/static/js/app_init.js', 'utf8');
-const start = appInitSource.indexOf('  window.showToast = function');
-const end = appInitSource.indexOf('\n  };', start) + 4;
+assert.ok(template.indexOf('/static/js/errors.js') < template.indexOf('/static/js/notifications.js'));
+assert.ok(template.indexOf('/static/js/notifications.js') < template.indexOf('/static/js/app_init.js'));
+const notificationsSource = fs.readFileSync('src/web/static/js/notifications.js', 'utf8');
+const start = notificationsSource.indexOf('  window.showToast = function');
+const end = notificationsSource.indexOf('\n  };', start) + 4;
 const messages = [];
 const winObj = { humanizeError: humanize };
 const toastContext = {
@@ -50,7 +51,7 @@ const toastContext = {
   setTimeout: () => {}
 };
 vm.createContext(toastContext);
-vm.runInContext(appInitSource.slice(start, end), toastContext);
+vm.runInContext(notificationsSource.slice(start, end), toastContext);
 toastContext.window.showToast('Conflict: stream revision changed (expected 2, current 3). Reload required.', 'error');
 toastContext.window.showToast('Изменения сохранены', 'success');
 assert.equal(messages[0], humanize('stream revision changed'));

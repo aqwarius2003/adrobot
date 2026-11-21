@@ -876,6 +876,9 @@ document.addEventListener('DOMContentLoaded', () => {
             'Связь прервалась во время публикации. Состояние результата не определено. Нажмите «Проверить результат» для безопасной сверки.',
             'warning'
           );
+          const timeoutErr = new Error(errMsg);
+          timeoutErr.isNetworkOrTimeout = true;
+          throw timeoutErr;
         }
         throw new Error(errMsg);
       }
@@ -887,10 +890,8 @@ document.addEventListener('DOMContentLoaded', () => {
           : 'Изменения опубликованы в Keitaro';
         showToast(successMsg, 'success');
       } else if (updatedStream.sync_status === 'unknown') {
-        showToast('Превышено время ожидания. Нажмите «Проверить результат» для сверки.', 'warning');
         showNotice('Публикация завершилась таймаутом. Требуется сверка состояния потока.', 'warning');
       } else if (updatedStream.sync_status === 'conflict') {
-        showToast('Обнаружен конфликт с трекером', 'error');
         showNotice('Обнаружен конфликт: состояние потока в трекере изменилось внешне.', 'conflict');
       }
       return true;
@@ -902,10 +903,12 @@ document.addEventListener('DOMContentLoaded', () => {
           'Связь с приложением прервалась во время публикации. Состояние результата не определено. Проверьте, что сервер запущен, и нажмите «Проверить результат».',
           'warning'
         );
-      }
-      showToast(err.message, 'error');
-      if (err.message && err.message.includes('Conflict')) {
+      } else if (err.isNetworkOrTimeout) {
+        // Persistent context notice already displayed in editorNotice
+      } else if (err.message && err.message.includes('Conflict')) {
         showNotice(err.message, 'conflict');
+      } else {
+        showToast(err.message, 'error');
       }
       return false;
     } finally {
@@ -935,7 +938,6 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (updatedStream.sync_status === 'dirty') {
         showToast('Сверка завершена: изменения сохранены локально, можно повторить публикацию', 'info');
       } else if (updatedStream.sync_status === 'conflict') {
-        showToast('Сверка выявила конфликт с трекером', 'warning');
         showNotice('Конфликт с трекером: удалённое состояние изменилось', 'conflict');
       } else {
         showToast(`Статус потока после сверки: ${getStatusText(updatedStream.sync_status, updatedStream.is_managed)}`, 'warning');
@@ -991,12 +993,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     }
-  }
-
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text || '';
-    return div.innerHTML;
   }
 
   // Expose state for connection_mode.js dirty & in-flight guards

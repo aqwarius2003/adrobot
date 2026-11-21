@@ -33,10 +33,6 @@ class StreamEditorService:
         self.db = db
         self.kt_client = kt_client
 
-    def _compute_fingerprint(self, stream_data: dict[str, Any]) -> str:
-        """Create deterministic SHA256 hash of stream offers and essential routing fields."""
-        return compute_stream_fingerprint(stream_data)
-
     async def fetch_campaign_streams(self, remote_campaign_id: int) -> CampaignDetailDTO:
         # Check if local campaign exists
         campaign = self.db.query(Campaign).filter_by(remote_campaign_id=remote_campaign_id).first()
@@ -167,7 +163,7 @@ class StreamEditorService:
                         action_type=r_stream.get("action_type"),
                         action_payload=r_stream.get("action_payload"),
                         sync_status="unsupported" if has_disabled_offers else "clean",
-                        remote_fingerprint=self._compute_fingerprint(r_stream),
+                        remote_fingerprint=compute_stream_fingerprint(r_stream),
                         raw_remote_config=r_stream,
                         last_sync_at=now,
                         revision=1,
@@ -183,7 +179,7 @@ class StreamEditorService:
                     local_stream.action_payload = r_stream.get(
                         "action_payload", local_stream.action_payload
                     )
-                    local_stream.remote_fingerprint = self._compute_fingerprint(r_stream)
+                    local_stream.remote_fingerprint = compute_stream_fingerprint(r_stream)
                     local_stream.raw_remote_config = r_stream
                     local_stream.last_sync_at = now
                     local_stream.is_managed = is_managed
@@ -510,7 +506,7 @@ class StreamEditorService:
         if not so or so.draft_state != "removed":
             raise EditorValidationError(f"Archived offer #{offer_id} not found in this stream")
 
-        # Step 9: Verify the global offer is still available in Keitaro catalog
+        # Verify the global offer is still available in Keitaro catalog before bringing it back
         try:
             kt_offer = await self.kt_client.get_offer(offer_id)
             if (

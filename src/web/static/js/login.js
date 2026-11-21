@@ -3,18 +3,19 @@ document.addEventListener('DOMContentLoaded', () => {
   const apiKeyInput = document.getElementById('apiKeyInput');
   const submitBtn = document.getElementById('submitBtn');
   const loginAlert = document.getElementById('loginAlert');
+  const returnToInput = document.getElementById('returnToInput');
 
   let countdownInterval = null;
 
   function showAlert(message, type = 'error') {
     loginAlert.className = `login-alert alert-${type}`;
-    loginAlert.innerHTML = message;
+    loginAlert.textContent = message;
     loginAlert.style.display = 'block';
   }
 
   function hideAlert() {
     loginAlert.style.display = 'none';
-    loginAlert.innerHTML = '';
+    loginAlert.textContent = '';
   }
 
   function startCountdown(seconds) {
@@ -25,10 +26,14 @@ document.addEventListener('DOMContentLoaded', () => {
     let remaining = seconds;
 
     const render = () => {
-      showAlert(
-        `Слишком много попыток. Повторите через <span class="countdown-timer">${remaining}</span> сек.`,
-        'warning'
-      );
+      loginAlert.className = 'login-alert alert-warning';
+      loginAlert.textContent = 'Слишком много попыток. Повторите через ';
+      const timerSpan = document.createElement('span');
+      timerSpan.className = 'countdown-timer';
+      timerSpan.textContent = String(remaining);
+      loginAlert.appendChild(timerSpan);
+      loginAlert.appendChild(document.createTextNode(' сек.'));
+      loginAlert.style.display = 'block';
     };
 
     render();
@@ -43,39 +48,6 @@ document.addEventListener('DOMContentLoaded', () => {
         render();
       }
     }, 1000);
-  }
-
-  function getSafeReturnTo(raw) {
-    if (!raw || typeof raw !== 'string') return '/real/editor';
-    const trimmed = raw.trim();
-    if (!trimmed) return '/real/editor';
-
-    // Reject schemes (colon before query), backslashes, protocol-relative, encoded variants
-    if (
-      trimmed.includes('\\') ||
-      trimmed.toLowerCase().includes('%5c') ||
-      trimmed.startsWith('//') ||
-      trimmed.toLowerCase().includes('%2f%2f') ||
-      trimmed.split('?')[0].includes(':') ||
-      trimmed.split('?')[0].toLowerCase().includes('%3a')
-    ) {
-      return '/real/editor';
-    }
-
-    try {
-      const dummyOrigin = 'http://localhost';
-      const parsed = new URL(trimmed, dummyOrigin);
-      if (parsed.origin !== dummyOrigin) return '/real/editor';
-
-      const p = parsed.pathname;
-      const allowed = ['/real/editor', '/editor', '/real/'];
-      const isAllowed = allowed.some((prefix) => p === prefix || p.startsWith(prefix));
-      if (!isAllowed) return '/real/editor';
-
-      return parsed.pathname + (parsed.search || '');
-    } catch (_) {
-      return '/real/editor';
-    }
   }
 
   loginForm.addEventListener('submit', async (e) => {
@@ -93,8 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Проверка ключа...';
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const returnTo = getSafeReturnTo(urlParams.get('return_to'));
+    const safeReturnTo = returnToInput && returnToInput.value ? returnToInput.value : '';
 
     try {
       const res = await fetch('/api/auth/login', {
@@ -103,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        body: JSON.stringify({ api_key: key }),
+        body: JSON.stringify({ api_key: key, return_to: safeReturnTo }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -112,7 +83,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.apiClient && data.csrf_token) {
           window.apiClient.setCsrfToken(data.csrf_token);
         }
-        window.location.href = returnTo;
+        window.location.href = data.return_to || safeReturnTo || '/real/editor';
         return;
       }
 

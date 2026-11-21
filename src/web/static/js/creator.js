@@ -58,16 +58,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeDropdownItems = [];
   let highlightedIndex = -1;
 
-  function escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
   function normalizeText(str) {
     return (str || '').toLowerCase().replace(/ё/g, 'е').trim();
   }
@@ -76,7 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadCountryCatalog() {
     try {
       geoError.classList.remove('visible');
-      geoError.innerHTML = '';
+      geoError.textContent = '';
       const res = await safeFetch(`${apiPrefix}/geo/countries`);
       if (!res.ok) throw new Error('Не удалось загрузить справочник стран');
       countriesCatalog = await res.json();
@@ -86,13 +76,15 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     } catch (err) {
       console.error('Countries catalog load error:', err);
-      geoError.innerHTML =
-        'Ошибка загрузки справочника стран. <button type="button" class="btn btn-secondary btn-sm geo-retry-btn" id="retryCountriesBtn">Повторить</button>';
+      geoError.textContent = 'Ошибка загрузки справочника стран. ';
+      const retryBtn = document.createElement('button');
+      retryBtn.type = 'button';
+      retryBtn.className = 'btn btn-secondary btn-sm geo-retry-btn';
+      retryBtn.id = 'retryCountriesBtn';
+      retryBtn.textContent = 'Повторить';
+      retryBtn.addEventListener('click', () => loadCountryCatalog());
+      geoError.appendChild(retryBtn);
       geoError.classList.add('visible');
-      const retryBtn = document.getElementById('retryCountriesBtn');
-      if (retryBtn) {
-        retryBtn.addEventListener('click', () => loadCountryCatalog());
-      }
     }
   }
   loadCountryCatalog();

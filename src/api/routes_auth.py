@@ -13,6 +13,7 @@ from src.core.security import (
     get_current_session,
     get_security_store,
     is_https_request,
+    validate_safe_return_url,
     verify_csrf_token,
     verify_request_origin,
 )
@@ -35,6 +36,7 @@ def _verify_origin_and_csrf(request: Request, session: dict[str, Any] | None) ->
 
 class LoginRequest(BaseModel):
     api_key: str = Field(..., max_length=1024, description="Keitaro Admin API key")
+    return_to: str | None = Field(default=None, max_length=2048, description="Target return URL")
 
 
 class SwitchModeRequest(BaseModel):
@@ -55,7 +57,7 @@ async def login(
     """Authenticate with Keitaro API key and issue session."""
     client_ip = get_client_ip(request)
 
-    # R7: Production requires HTTPS
+    # Production environments strictly require HTTPS for session authentication
     is_https = is_https_request(request)
     if settings.APP_ENV == "production" and not is_https:
         return JSONResponse(
@@ -72,6 +74,7 @@ async def login(
                 "status": "ok",
                 "authenticated": True,
                 "csrf_token": result["csrf_token"],
+                "return_to": validate_safe_return_url(req.return_to),
             },
             headers={"Cache-Control": "no-store"},
         )

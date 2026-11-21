@@ -292,3 +292,123 @@ def test_creator_traffic_source_dict_parameters(client: TestClient, mock_kt: Moc
 
     assert "utm_source={network}" in data["tracking_url"]
     assert "utm_campaign={campaignid}" in data["tracking_url"]
+
+
+def test_format_source_params_supported_and_empty_values():
+    from src.services.creator_service import CampaignCreatorService
+
+    # 1. Empty/falsy inputs
+    assert CampaignCreatorService.format_source_params(None) == ""
+    assert CampaignCreatorService.format_source_params("") == ""
+    assert CampaignCreatorService.format_source_params({}) == ""
+    assert CampaignCreatorService.format_source_params([]) == ""
+    assert CampaignCreatorService.format_source_params(()) == ""
+
+    # 2. String formats
+    assert (
+        CampaignCreatorService.format_source_params("utm_source=google&sub1={subid}")
+        == "utm_source=google&sub1={subid}"
+    )
+    assert (
+        CampaignCreatorService.format_source_params("?utm_source=google&sub1={subid}")
+        == "utm_source=google&sub1={subid}"
+    )
+    assert (
+        CampaignCreatorService.format_source_params("   ?utm_source=google   ")
+        == "utm_source=google"
+    )
+
+    # 3. Dict with nested descriptors
+    nested = {
+        "source": {"name": "utm_source", "placeholder": "{network}"},
+        "medium": {"name": "utm_medium", "value": "cpc"},
+        "keyword": {"name": "utm_term"},  # Valueless descriptor
+    }
+    res_nested = CampaignCreatorService.format_source_params(nested)
+    assert "utm_source={network}" in res_nested
+    assert "utm_medium=cpc" in res_nested
+    assert "utm_term" in res_nested
+
+    # 4. Exact boolean values (True -> "debug=True", False -> "debug=False")
+    assert CampaignCreatorService.format_source_params({"debug": True}) == "debug=True"
+    assert CampaignCreatorService.format_source_params({"debug": False}) == "debug=False"
+
+    # 5. Flat dict format including booleans, strings, valueless / flag keys and None
+    flat = {
+        "utm_campaign": "promo123",
+        "sub_id": "{clickid}",
+        "debug": True,
+        "trace": False,
+        "empty_flag": "",
+        "ignored_none": None,
+    }
+    assert (
+        CampaignCreatorService.format_source_params(flat)
+        == "utm_campaign=promo123&sub_id={clickid}&debug=True&trace=False&empty_flag"
+    )
+
+
+def test_creator_traffic_source_template_fallback(client: TestClient, mock_kt: MockKeitaroClient):
+    mock_kt.sources = [
+        {
+            "id": 303,
+            "name": "Legacy Source with Template",
+            "parameters": None,
+            "template": "sub1={subid}&sub2={keyword}",
+        }
+    ]
+
+    payload = {
+        "name": "template_fallback_camp",
+        "geo": "AU",
+        "offer_id": 5001,
+        "domain_id": 101,
+        "traffic_source_id": 303,
+    }
+
+    response = client.post("/api/campaigns", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+    assert "sub1={subid}&sub2={keyword}" in data["tracking_url"]
+
+
+def test_format_source_params_security_logging_redacts_raw_values(caplog):
+    import logging
+
+    from src.services.creator_service import CampaignCreatorService
+
+    secret_marker_1 = "SUPER_SECRET_TOKEN_DO_NOT_LEAK_LIST_12345"
+    secret_marker_2 = "SUPER_SECRET_PARAM_VALUE_DO_NOT_LEAK_DICT_67890"
+    secret_marker_3 = "SUPER_SECRET_TOKEN_DO_NOT_LEAK_TUPLE_54321"
+
+    service = CampaignCreatorService(None, None)
+
+    with caplog.at_level(logging.WARNING):
+        # Unrecognized collection type (non-empty list) containing secret marker -> empty string
+        res1 = service.format_source_params([{"name": secret_marker_1}])
+        assert res1 == ""
+
+        # Unrecognized collection type (non-empty tuple) containing secret marker -> empty string
+        res2 = service.format_source_params((("param", secret_marker_3),))
+        assert res2 == ""
+
+        # Dict with unsupported value structure containing secret marker -> ignored
+        res3 = service.format_source_params({"safe_key": [secret_marker_2, "another_val"]})
+        assert res3 == ""
+
+        # Exception handling in build_tracking_url
+        res4 = service.build_tracking_url(
+            "https://example.com", "alias123", source_params=[secret_marker_1]
+        )
+        assert res4 == "https://example.com/alias123"
+
+    # Verify diagnostic logs do NOT contain secret values
+    full_log = caplog.text
+    assert secret_marker_1 not in full_log
+    assert secret_marker_2 not in full_log
+    assert secret_marker_3 not in full_log
+
+    # But diagnostic information is preserved with structural type names
+    assert "Unsupported traffic source parameters type: list" in full_log
+    assert "Unsupported traffic source parameters type: tuple" in full_log
+    assert "Ignoring parameter with unsupported value structure (type: list)" in full_log

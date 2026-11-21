@@ -184,14 +184,13 @@ def test_5_unreachable_simulator_clear_error(app_client: TestClient):
 
 def test_5_push_connection_loss_yields_unknown_status(app_client: TestClient):
     """5b. Connection loss during Push PUT preserves draft and leaves sync_status='unknown'."""
-    from src.services.sync_service import StreamSyncService
+    from src.domain.weights import compute_stream_fingerprint
 
-    dummy_sync = StreamSyncService(None, None)
     remote_state = {
         "id": 9991,
         "offers": [{"offer_id": 1, "share": 50, "state": "active"}],
     }
-    matching_fp = dummy_sync._compute_fingerprint(remote_state)
+    matching_fp = compute_stream_fingerprint(remote_state)
 
     # Setup test stream in local db
     db = DemoSessionLocal()
