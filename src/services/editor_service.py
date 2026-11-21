@@ -198,6 +198,7 @@ class StreamEditorService:
                         so.draft_share = 0
                         so.draft_pinned = False
                         so.baseline_pinned = False
+                        so.draft_auto_pinned = False
                     continue
 
                 # Process offers for managed stream
@@ -243,6 +244,7 @@ class StreamEditorService:
                         so.baseline_state = "active"
                         so.draft_share = share
                         so.draft_state = "active"
+                        so.draft_auto_pinned = False
                         so.archive_reason = None
                         so.has_been_published = True
 
@@ -258,6 +260,7 @@ class StreamEditorService:
                         so.draft_share = 0
                         so.draft_pinned = False
                         so.baseline_pinned = False
+                        so.draft_auto_pinned = False
                         so.archive_reason = "remote_missing"
 
             # Check for streams deleted remotely in KT
@@ -474,6 +477,7 @@ class StreamEditorService:
         so.draft_state = "removed"
         so.draft_share = 0
         so.draft_pinned = False
+        so.draft_auto_pinned = False
         so.archive_reason = "local_remove"
 
         self._recalculate_stream_weights(stream)
@@ -526,6 +530,7 @@ class StreamEditorService:
 
         so.draft_state = "active"
         so.draft_pinned = False
+        so.draft_auto_pinned = False
         so.archive_reason = None
 
         self._recalculate_stream_weights(stream)
@@ -566,11 +571,14 @@ class StreamEditorService:
         if share is not None:
             if share < 0 or share > 100:
                 raise EditorValidationError("Share must be an integer between 0 and 100")
+            if not so.draft_pinned:
+                so.draft_auto_pinned = True
             so.draft_share = share
             so.draft_pinned = True
 
         if is_pinned is not None:
             so.draft_pinned = is_pinned
+            so.draft_auto_pinned = False
 
         if is_pin_only:
             # SPEC §11.2: Simple pin without new share strictly preserves all existing shares.
@@ -608,6 +616,7 @@ class StreamEditorService:
                 so.draft_share = so.baseline_share
                 so.draft_state = so.baseline_state
                 so.draft_pinned = so.baseline_pinned
+                so.draft_auto_pinned = False
                 so.archive_reason = (
                     None if so.baseline_state == "active" else (so.archive_reason or "local_remove")
                 )
@@ -621,12 +630,24 @@ class StreamEditorService:
         return self._build_stream_dto(stream)
 
     def _refresh_draft_status(self, stream: Stream) -> None:
-        # An edit can undo an earlier edit. Compare persisted values rather than
-        # keeping a sticky dirty flag; do not clear unresolved sync failures.
-        if stream.sync_status not in ("clean", "dirty"):
-            return
         self.db.flush()
         offers = self.db.query(StreamOffer).filter_by(stream_id=stream.id).all()
+        # Keep entered weights fixed until ALL weights/composition are restored;
+        # releasing pins one by one would redistribute already restored weights.
+        # An automatic pin always starts from an unpinned draft, so undo restores
+        # False, including an explicit Unpin of a previously published pin.
+        if all(
+            (so.draft_state, so.draft_share) == (so.baseline_state, so.baseline_share)
+            for so in offers
+        ):
+            for so in offers:
+                if so.draft_auto_pinned:
+                    so.draft_pinned = False
+                    so.draft_auto_pinned = False
+        # An edit can undo an earlier edit. Compare values rather than keeping
+        # a sticky dirty flag; do not clear unresolved sync failures.
+        if stream.sync_status not in ("clean", "dirty"):
+            return
         has_changes = any(
             (so.draft_state, so.draft_share, so.draft_pinned)
             != (so.baseline_state, so.baseline_share, so.baseline_pinned)

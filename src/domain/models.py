@@ -120,6 +120,8 @@ class StreamOffer(Base):
     draft_share: Mapped[int] = mapped_column(Integer, default=0)
     draft_state: Mapped[str] = mapped_column(String(32), default="active")  # active, removed
     draft_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Weight entry pins temporarily; an explicit Pin click must survive undoing a weight.
+    draft_auto_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     archive_reason: Mapped[str | None] = mapped_column(
         String(64), nullable=True

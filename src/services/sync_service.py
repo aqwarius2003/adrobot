@@ -233,6 +233,7 @@ class StreamSyncService:
             # KT already has identical offers; only local pins or flags changed!
             logger.info("Pin-only or no-op push detected: skipping remote PUT to Keitaro")
             for so in stream.stream_offers:
+                so.draft_auto_pinned = False
                 if so.draft_state == "active":
                     so.baseline_share = so.draft_share
                     so.baseline_state = "active"
@@ -316,6 +317,7 @@ class StreamSyncService:
             )
 
         for so in stream.stream_offers:
+            so.draft_auto_pinned = False
             if so.draft_state == "active":
                 so.baseline_share = so.draft_share
                 so.baseline_state = "active"
@@ -467,6 +469,12 @@ class StreamSyncService:
                 # Strictly evaluate clean vs dirty including pins!
                 is_clean = True
                 for so in stream.stream_offers:
+                    if (
+                        so.draft_share == so.baseline_share
+                        and so.draft_state == so.baseline_state
+                        and so.draft_pinned == so.baseline_pinned
+                    ):
+                        so.draft_auto_pinned = False
                     if (
                         so.draft_share != so.baseline_share
                         or so.draft_state != so.baseline_state

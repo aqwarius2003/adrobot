@@ -14,11 +14,12 @@ class Element {
   querySelector() { const tbody = new Element('tbody'); this.appendChild(tbody); return tbody; }
 }
 let requests = 0;
+let lastWeightChange;
 const context = {
   window: { APP_CONFIG: {}, OfferCombobox: class {} },
   document: { createElement: (tag) => new Element(tag), createTextNode: (text) => ({ text }) },
   getStatusText: () => 'Синхронизирован', escapeHtml: (text) => text,
-  updateWeight: async () => { requests++; }, showToast: () => {}
+  updateWeight: async (...args) => { requests++; lastWeightChange = args; }, showToast: () => {}
 };
 vm.createContext(context);
 vm.runInContext(extract('getWeightEditLimits') + '\n' + extract('createStreamCard'), context);
@@ -62,6 +63,8 @@ const offer = (id, share, pinned = false, state = 'active') => ({ offer_id: id, 
   assert.equal(flexible[1].disabled, true);
   await pending;
   assert.equal(requests, 1);
+  assert.equal(lastWeightChange[2], 34);
+  assert.equal(lastWeightChange[3], null, 'Weight entry must not send an explicit Pin command');
   assert.equal(flexible[1].disabled, false);
   assert.ok(controls([offer(1, 50), offer(2, 50)], 'publishing').every((input) => input.disabled));
   console.log('Weight controls: single offer, pins, bounds, invalid input, pending request passed');

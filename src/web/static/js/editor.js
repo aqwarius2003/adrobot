@@ -526,7 +526,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (newShare === off.share) return;
           input.disabled = true;
           try {
-            await updateWeight(stream, off.offer_id, newShare, true);
+            await updateWeight(stream, off.offer_id, newShare, null);
           } finally {
             // A successful response replaces the card; on failure restore this input.
             input.value = off.share;

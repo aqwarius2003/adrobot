@@ -139,7 +139,7 @@ def test_only_working_databases_are_initialized_and_migrated(real_launch):
     report, directory = real_launch
     assert (directory / "app.db").exists()
     assert (directory / "security.db").exists()
-    assert report["migration"] == "a1b2c3d4e5f6"
+    assert report["migration"] == "b7c8d9e0f1a2"
     assert report["campaign_count"] == 0
     assert all("demo" not in name.lower() for name in report["tables"])
     assert report["health"]["status"] == "ok"
@@ -271,6 +271,6 @@ for _ in range(2):
         offers = sorted(stream.stream_offers, key=lambda item: item.offer.remote_offer_id)
         assert [(o.baseline_share, o.draft_share, o.draft_state, o.draft_pinned) for o in offers] == [
             (50, 25, "active", True), (50, 75, "active", False), (0, 0, "removed", False)]
-        assert session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "a1b2c3d4e5f6"
+        assert session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "b7c8d9e0f1a2"
     assert all(path.read_bytes() == original for path, original in before.items())
 """

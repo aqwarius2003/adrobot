@@ -326,6 +326,138 @@ def test_dirty_fetch_rejected(client: TestClient):
     assert "unpublished local changes" in res.json()["detail"]
 
 
+@pytest.mark.parametrize("manual_pin", [False, True])
+def test_returning_weight_to_baseline_preserves_only_manual_pins(client, mock_kt, manual_pin):
+    campaign = client.post("/api/campaigns/100/fetch-streams").json()
+    stream = next(s for s in campaign["streams"] if s["remote_stream_id"] == 1002)
+
+    def patch(**changes):
+        response = client.patch(
+            f"/api/streams/{stream['id']}/offers/501",
+            json={**changes, "expected_revision": stream["revision"]},
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    if manual_pin:
+        stream = patch(is_pinned=True)
+    stream = patch(share=50)
+    assert stream["sync_status"] == "dirty"
+    assert [o["share"] for o in stream["offers"]] == [50, 25, 25]
+    assert stream["offers"][0]["is_pinned"] is True
+
+    # Read from a new request/session: automatic pin intent must survive reload.
+    reloaded = client.get("/api/campaigns/100").json()
+    stream = next(s for s in reloaded["streams"] if s["id"] == stream["id"])
+    stream = patch(share=34)
+    assert [o["share"] for o in stream["offers"]] == [34, 33, 33]
+    assert stream["offers"][0]["is_pinned"] is manual_pin
+    assert stream["sync_status"] == ("dirty" if manual_pin else "clean")
+    if manual_pin:
+        stream = patch(is_pinned=False)
+        assert stream["sync_status"] == "clean"
+    assert mock_kt.last_update_payload is None
+    assert client.post("/api/campaigns/100/fetch-streams").status_code == 200
+
+
+def test_multiple_weight_changes_return_to_baseline_without_losing_other_edits(client, mock_kt):
+    campaign = client.post("/api/campaigns/100/fetch-streams").json()
+    stream = next(s for s in campaign["streams"] if s["remote_stream_id"] == 1002)
+    for offer_id, share, expected_shares, expected_status in (
+        (501, 40, [40, 30, 30], "dirty"),
+        (502, 35, [40, 35, 25], "dirty"),
+        (501, 34, [34, 35, 31], "dirty"),
+        (502, 33, [34, 33, 33], "clean"),
+    ):
+        response = client.patch(
+            f"/api/streams/{stream['id']}/offers/{offer_id}",
+            json={"share": share, "expected_revision": stream["revision"]},
+        )
+        assert response.status_code == 200, response.text
+        stream = response.json()
+        assert [o["share"] for o in stream["offers"]] == expected_shares
+        assert stream["sync_status"] == expected_status
+    assert not any(o["is_pinned"] for o in stream["offers"])
+    assert mock_kt.last_update_payload is None
+
+
+def test_returning_one_weight_keeps_dirty_when_other_weights_differ(client, mock_kt):
+    mock_kt.streams[1002]["offers"] = [
+        {"offer_id": 501, "share": 60},
+        {"offer_id": 502, "share": 25},
+        {"offer_id": 503, "share": 15},
+    ]
+    campaign = client.post("/api/campaigns/100/fetch-streams").json()
+    stream = next(s for s in campaign["streams"] if s["remote_stream_id"] == 1002)
+    for share in (50, 60):
+        response = client.patch(
+            f"/api/streams/{stream['id']}/offers/501",
+            json={"share": share, "expected_revision": stream["revision"]},
+        )
+        assert response.status_code == 200, response.text
+        stream = response.json()
+    assert [o["share"] for o in stream["offers"]] == [60, 20, 20]
+    assert stream["offers"][0]["is_pinned"] is True
+    assert stream["sync_status"] == "dirty"
+    # Keep the restored 60 fixed while restoring the remaining uneven weights.
+    response = client.patch(
+        f"/api/streams/{stream['id']}/offers/502",
+        json={"share": 25, "expected_revision": stream["revision"]},
+    )
+    assert response.status_code == 200, response.text
+    stream = response.json()
+    assert [o["share"] for o in stream["offers"]] == [60, 25, 15]
+    assert not any(o["is_pinned"] for o in stream["offers"])
+    assert stream["sync_status"] == "clean"
+    assert mock_kt.last_update_payload is None
+
+
+@pytest.mark.parametrize("pin_source", ["manual", "automatic"])
+@pytest.mark.parametrize("unpin_before_edit", [False, True])
+def test_weight_undo_preserves_published_pin_intent(client, mock_kt, pin_source, unpin_before_edit):
+    campaign = client.post("/api/campaigns/100/fetch-streams").json()
+    stream = next(s for s in campaign["streams"] if s["remote_stream_id"] == 1002)
+    response = client.patch(
+        f"/api/streams/{stream['id']}/offers/501",
+        json={
+            **({"is_pinned": True} if pin_source == "manual" else {"share": 50}),
+            "expected_revision": stream["revision"],
+        },
+    )
+    stream = response.json()
+    response = client.post(
+        f"/api/streams/{stream['id']}/push",
+        json={"expected_revision": stream["revision"]},
+    )
+    assert response.status_code == 200, response.text
+    stream = response.json()
+    baseline_share = 34 if pin_source == "manual" else 50
+    if unpin_before_edit:
+        response = client.patch(
+            f"/api/streams/{stream['id']}/offers/501",
+            json={"is_pinned": False, "expected_revision": stream["revision"]},
+        )
+        assert response.status_code == 200, response.text
+        stream = response.json()
+    for share in (60, baseline_share):
+        response = client.patch(
+            f"/api/streams/{stream['id']}/offers/501",
+            json={"share": share, "expected_revision": stream["revision"]},
+        )
+        assert response.status_code == 200, response.text
+        stream = response.json()
+    assert stream["sync_status"] == ("dirty" if unpin_before_edit else "clean")
+    assert stream["offers"][0]["is_pinned"] is (not unpin_before_edit)
+    if pin_source == "manual":
+        assert mock_kt.last_update_payload is None
+    else:
+        assert mock_kt.last_update_payload["offers"] == [
+            {"offer_id": 501, "share": 50, "state": "active"},
+            {"offer_id": 502, "share": 25, "state": "active"},
+            {"offer_id": 503, "share": 25, "state": "active"},
+        ]
+
+
 def test_stale_revision_rejected(client: TestClient):
     # Fetch clean
     res = client.post("/api/campaigns/100/fetch-streams")
